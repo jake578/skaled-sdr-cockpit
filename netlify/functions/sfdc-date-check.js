@@ -1,4 +1,4 @@
-// Check all date fields on specific records to find the right one
+// Check all date fields including Outreach custom fields
 export default async (req) => {
   const cookieHeader = req.headers.get("cookie") || "";
   const match = cookieHeader.match(/sfdc_tokens=([^;]+)/);
@@ -8,11 +8,10 @@ export default async (req) => {
   try { tokens = JSON.parse(decodeURIComponent(match[1])); } catch { return Response.json({ error: "bad cookie" }, { status: 401 }); }
 
   const results = {};
+  const fields = `Id, Subject, CreatedDate, ActivityDate, CompletedDateTime, LID__Date_Sent__c, Outreach_Sequence_Name__c, Outreach_Replied_At__c, Outreach_Open_Count__c, Click_Count__c, cirrusadv__First_Opened__c, cirrusadv__First_Reply__c, cirrusadv__Template_Name__c, cirrusadv__Day_Activity_Created__c, Who.Name`;
   const queries = {
-    burtnett_task: `SELECT Id, Subject, CreatedDate, LastModifiedDate, ActivityDate, CompletedDateTime, Status, Type, Who.Name FROM Task WHERE Who.Name = 'Damian Burtnett' ORDER BY CreatedDate DESC LIMIT 3`,
-    dipietro_task: `SELECT Id, Subject, CreatedDate, LastModifiedDate, ActivityDate, CompletedDateTime, Status, Type, Who.Name FROM Task WHERE Who.Name = 'Michael DiPietro' ORDER BY CreatedDate DESC LIMIT 3`,
-    // Also check if there are Outreach-specific fields
-    task_fields: `SELECT Id, Subject, CreatedDate, LastModifiedDate, ActivityDate, CompletedDateTime FROM Task ORDER BY CreatedDate DESC LIMIT 1`,
+    burtnett: `SELECT ${fields} FROM Task WHERE Who.Name = 'Damian Burtnett' ORDER BY CreatedDate DESC LIMIT 3`,
+    dipietro: `SELECT ${fields} FROM Task WHERE Who.Name = 'Michael DiPietro' ORDER BY CreatedDate DESC LIMIT 3`,
   };
 
   for (const [key, soql] of Object.entries(queries)) {
