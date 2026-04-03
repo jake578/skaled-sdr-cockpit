@@ -144,15 +144,100 @@ export default async (req) => {
           return data.records || [];
         };
 
-        // Stalled/upcoming opps
-        const opps = await sfdcQuery(
-          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 20`
+        // ── Build cross-source last touch map (Gmail + Calendar + Chorus) ──
+        const allOpenOpps = await sfdcQuery(
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 100`
         );
 
-        opps.forEach(o => {
-          const daysSinceActivity = o.LastActivityDate
-            ? Math.floor((now.getTime() - new Date(o.LastActivityDate).getTime()) / 86400000)
-            : 999;
+        const accountLastTouch = {};
+        // Gmail sent emails (last 30 days)
+        try {
+          const gtoken = await getAccessToken();
+          const sentRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=in:sent newer_than:30d`,
+            { headers: { Authorization: `Bearer ${gtoken}` } }
+          );
+          const sentData = await sentRes.json();
+          if (sentData.messages?.length) {
+            const emailDetails = await Promise.all(
+              sentData.messages.slice(0, 60).map(async m => {
+                const res = await fetch(
+                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Subject`,
+                  { headers: { Authorization: `Bearer ${gtoken}` } }
+                );
+                if (!res.ok) return null;
+                const msg = await res.json();
+                const headers = {};
+                (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
+                return headers;
+              })
+            );
+            emailDetails.filter(Boolean).forEach(e => {
+              const dateStr = e.date ? new Date(e.date).toISOString().split("T")[0] : null;
+              if (!dateStr) return;
+              const text = ((e.to || "") + " " + (e.subject || "")).toLowerCase();
+              allOpenOpps.forEach(o => {
+                const acctName = (o.Account?.Name || "").toLowerCase();
+                if (acctName && acctName.length > 2 && text.includes(acctName)) {
+                  if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+                }
+              });
+            });
+          }
+        } catch { /* Gmail unavailable */ }
+
+        // Calendar meetings (last 30 days)
+        try {
+          const gtoken = await getAccessToken();
+          const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
+          const calRes = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(now.toISOString())}&maxResults=100&singleEvents=true&orderBy=startTime`,
+            { headers: { Authorization: `Bearer ${gtoken}` } }
+          );
+          const calData = await calRes.json();
+          (calData.items || []).forEach(event => {
+            const text = ((event.summary || "") + " " + (event.attendees || []).map(a => (a.displayName || a.email || "")).join(" ")).toLowerCase();
+            const dateStr = (event.start?.dateTime || event.start?.date || "").split("T")[0];
+            if (!dateStr) return;
+            allOpenOpps.forEach(o => {
+              const acctName = (o.Account?.Name || "").toLowerCase();
+              if (acctName && acctName.length > 2 && text.includes(acctName)) {
+                if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+              }
+            });
+          });
+        } catch { /* Calendar unavailable */ }
+
+        // Chorus calls from SFDC Events
+        try {
+          const chorusEvents = await sfdcQuery(
+            `SELECT Subject, What.Name, StartDateTime FROM Event WHERE Subject LIKE 'Chorus%' AND StartDateTime >= LAST_N_DAYS:30 ORDER BY StartDateTime DESC LIMIT 100`
+          );
+          chorusEvents.forEach(e => {
+            const dateStr = (e.StartDateTime || "").split("T")[0];
+            const whatName = (e.What?.Name || "").toLowerCase();
+            if (!dateStr) return;
+            allOpenOpps.forEach(o => {
+              const acctName = (o.Account?.Name || "").toLowerCase();
+              if (acctName && acctName.length > 2 && whatName.includes(acctName)) {
+                if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+              }
+            });
+          });
+        } catch { /* Chorus unavailable */ }
+
+        // Helper: get real days since activity for any opp
+        const getRealDaysSince = (o) => {
+          const acctName = (o.Account?.Name || "").toLowerCase();
+          const sfdcDate = o.LastActivityDate || null;
+          const realDate = accountLastTouch[acctName] || null;
+          const bestDate = [sfdcDate, realDate].filter(Boolean).sort().pop();
+          return bestDate ? Math.floor((now.getTime() - new Date(bestDate).getTime()) / 86400000) : 999;
+        };
+
+        // Stalled/upcoming opps (using REAL activity dates)
+        allOpenOpps.forEach(o => {
+          const daysSinceActivity = getRealDaysSince(o);
           const daysToClose = o.CloseDate
             ? Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000)
             : 999;
@@ -167,7 +252,7 @@ export default async (req) => {
             suggestion = `Close date in ${daysToClose} days. Confirm status and next steps.`;
           } else if (daysSinceActivity >= 14) {
             priority = "high";
-            suggestion = `No activity in ${daysSinceActivity} days. Re-engage or update pipeline.`;
+            suggestion = `No activity in ${daysSinceActivity} days (across Gmail, Calendar, Chorus). Re-engage or update pipeline.`;
           } else {
             suggestion = `Close date: ${o.CloseDate}. Review and advance.`;
           }
@@ -256,114 +341,8 @@ export default async (req) => {
         actions.sfdcCleanup.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
 
         // ── 5. Deals at Risk: close date moved 2+ times or no activity in 10+ days ──
-        // Cross-reference Gmail, Calendar, Chorus for real last activity per account
+        // (reuses allOpenOpps, accountLastTouch, getRealDaysSince from above)
 
-        const allOpenOpps = await sfdcQuery(
-          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 100`
-        );
-
-        // Build account name → last real activity date map from Gmail + Calendar + Chorus
-        const accountLastTouch = {}; // accountName (lowercase) → date string
-
-        // Gmail: search sent emails mentioning account/company names (last 30 days)
-        try {
-          const gtoken = await getAccessToken();
-          const sentRes = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=in:sent newer_than:30d`,
-            { headers: { Authorization: `Bearer ${gtoken}` } }
-          );
-          const sentData = await sentRes.json();
-          if (sentData.messages?.length) {
-            const emailDetails = await Promise.all(
-              sentData.messages.slice(0, 60).map(async m => {
-                const res = await fetch(
-                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Subject`,
-                  { headers: { Authorization: `Bearer ${gtoken}` } }
-                );
-                if (!res.ok) return null;
-                const msg = await res.json();
-                const headers = {};
-                (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
-                return headers;
-              })
-            );
-            emailDetails.filter(Boolean).forEach(e => {
-              const dateStr = e.date ? new Date(e.date).toISOString().split("T")[0] : null;
-              if (!dateStr) return;
-              const to = (e.to || "").toLowerCase();
-              const subject = (e.subject || "").toLowerCase();
-              // Match against account names
-              allOpenOpps.forEach(o => {
-                const acctName = (o.Account?.Name || "").toLowerCase();
-                if (acctName && acctName.length > 2 && (to.includes(acctName) || subject.includes(acctName))) {
-                  if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) {
-                    accountLastTouch[acctName] = dateStr;
-                  }
-                }
-              });
-            });
-          }
-        } catch { /* Gmail unavailable */ }
-
-        // Calendar: check meetings with account names (last 30 days)
-        try {
-          const gtoken = await getAccessToken();
-          const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
-          const calRes = await fetch(
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
-            `timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(now.toISOString())}` +
-            `&maxResults=100&singleEvents=true&orderBy=startTime`,
-            { headers: { Authorization: `Bearer ${gtoken}` } }
-          );
-          const calData = await calRes.json();
-          (calData.items || []).forEach(event => {
-            const summary = (event.summary || "").toLowerCase();
-            const dateStr = (event.start?.dateTime || event.start?.date || "").split("T")[0];
-            if (!dateStr) return;
-            allOpenOpps.forEach(o => {
-              const acctName = (o.Account?.Name || "").toLowerCase();
-              if (acctName && acctName.length > 2 && summary.includes(acctName)) {
-                if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) {
-                  accountLastTouch[acctName] = dateStr;
-                }
-              }
-            });
-            // Also check attendee emails/names
-            (event.attendees || []).forEach(a => {
-              const attendee = ((a.displayName || "") + " " + (a.email || "")).toLowerCase();
-              allOpenOpps.forEach(o => {
-                const acctName = (o.Account?.Name || "").toLowerCase();
-                if (acctName && acctName.length > 2 && attendee.includes(acctName)) {
-                  if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) {
-                    accountLastTouch[acctName] = dateStr;
-                  }
-                }
-              });
-            });
-          });
-        } catch { /* Calendar unavailable */ }
-
-        // Chorus calls (from SFDC Events)
-        try {
-          const chorusEvents = await sfdcQuery(
-            `SELECT Subject, What.Name, StartDateTime FROM Event WHERE Subject LIKE 'Chorus%' AND StartDateTime >= LAST_N_DAYS:30 ORDER BY StartDateTime DESC LIMIT 100`
-          );
-          chorusEvents.forEach(e => {
-            const dateStr = (e.StartDateTime || "").split("T")[0];
-            const whatName = (e.What?.Name || "").toLowerCase();
-            if (!dateStr) return;
-            allOpenOpps.forEach(o => {
-              const acctName = (o.Account?.Name || "").toLowerCase();
-              if (acctName && acctName.length > 2 && whatName.includes(acctName)) {
-                if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) {
-                  accountLastTouch[acctName] = dateStr;
-                }
-              }
-            });
-          });
-        } catch { /* Chorus unavailable */ }
-
-        // Check close date change history
         let closeDateChanges = {};
         try {
           const historyRecords = await sfdcQuery(
@@ -375,18 +354,9 @@ export default async (req) => {
         } catch { /* Field history tracking might not be enabled */ }
 
         allOpenOpps.forEach(o => {
-          const acctName = (o.Account?.Name || "").toLowerCase();
-
-          // Real last activity: best of SFDC LastActivityDate vs Gmail/Calendar/Chorus
-          const sfdcDate = o.LastActivityDate || null;
-          const realDate = accountLastTouch[acctName] || null;
-          const bestDate = [sfdcDate, realDate].filter(Boolean).sort().pop(); // latest of the two
-
-          const daysSinceActivity = bestDate
-            ? Math.floor((now.getTime() - new Date(bestDate).getTime()) / 86400000)
-            : 999;
+          const daysSinceActivity = getRealDaysSince(o);
           const closeDateMoves = closeDateChanges[o.Id] || 0;
-          const noRecentActivity = daysSinceActivity >= 11; // 1.5 weeks
+          const noRecentActivity = daysSinceActivity >= 11;
           const closeDateSlipped = closeDateMoves >= 2;
 
           if (!noRecentActivity && !closeDateSlipped) return;
@@ -395,15 +365,18 @@ export default async (req) => {
           if (closeDateSlipped) reasons.push(`Close date moved ${closeDateMoves}x`);
           if (noRecentActivity) reasons.push(`No activity in ${daysSinceActivity}d`);
 
-          // Show activity source breakdown
+          const acctName = (o.Account?.Name || "").toLowerCase();
+          const realDate = accountLastTouch[acctName] || null;
+          const sfdcDate = o.LastActivityDate || null;
+          const bestDate = [sfdcDate, realDate].filter(Boolean).sort().pop();
           const activityNote = bestDate
             ? (realDate && realDate > (sfdcDate || "")) ? `Last touch: ${bestDate} (Gmail/Cal/Chorus)` : `Last touch: ${bestDate} (SFDC)`
-            : "No activity found";
+            : "No activity found across Gmail, Calendar, Chorus, or SFDC";
 
           actions.dealsAtRisk.push({
             id: `opp-${o.Id}`,
             type: "follow-up",
-            priority: (closeDateSlipped && noRecentActivity) ? "critical" : closeDateSlipped ? "high" : "high",
+            priority: (closeDateSlipped && noRecentActivity) ? "critical" : "high",
             title: `${o.Name}`,
             subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"} · ${o.Group_Forecast_Category__c || "—"}`,
             channel: "salesforce",
