@@ -44,27 +44,25 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
   const [sending, setSending] = useState(false);
   const [contextUsed, setContextUsed] = useState([]);
   const [error, setError] = useState(null);
-  const [emailContext, setEmailContext] = useState(null);
+  const [interactionCtx, setInteractionCtx] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
+  const [contextExpanded, setContextExpanded] = useState(false);
   const didAutoRun = useRef(false);
 
-  // Fetch email/call context for preview
+  // Fetch full interaction context
   const fetchContext = useCallback(async () => {
     setContextLoading(true);
     try {
       const contactName = action?.contact || "";
       const accountName = action?.subtitle?.split("·")[0]?.trim() || "";
-      const searchTerms = [contactName, accountName].filter(t => t && t !== "—" && t.length > 2);
-      if (searchTerms.length === 0) { setContextLoading(false); return; }
-
-      const res = await fetch("/.netlify/functions/gmail-activities");
+      const res = await fetch("/.netlify/functions/interaction-context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactName, accountName }),
+      });
       const data = await res.json();
-      if (data.activities?.length) {
-        const relevant = data.activities.filter(a => {
-          const text = `${a.contact} ${a.subject} ${a.company}`.toLowerCase();
-          return searchTerms.some(t => text.includes(t.toLowerCase()));
-        }).slice(0, 5);
-        if (relevant.length) setEmailContext(relevant);
+      if (data.summary || data.emails?.length || data.calls?.length || data.meetings?.length) {
+        setInteractionCtx(data);
       }
     } catch { /* ignore */ }
     setContextLoading(false);
@@ -146,20 +144,72 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
             onClick={() => setMode("ai")}>AI Draft</button>
         </div>
 
-        {/* Context preview — show what you're responding to */}
-        {emailContext && emailContext.length > 0 && (
-          <div style={s.contextBox}>
-            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 6, fontWeight: 600, textTransform: "uppercase" }}>Recent interactions</div>
-            {emailContext.map((e, i) => (
-              <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: i < emailContext.length - 1 ? "1px solid #334155" : "none" }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 10, background: e.type === "email" ? "#3B82F620" : e.type === "call" ? "#8B5CF620" : "#F59E0B20", color: e.type === "email" ? "#3B82F6" : e.type === "call" ? "#8B5CF6" : "#F59E0B", padding: "1px 6px", borderRadius: 3 }}>{e.type}</span>
-                  <span style={{ fontSize: 11, color: "#F1F5F9" }}>{e.subject}</span>
-                  <span style={{ fontSize: 10, color: "#64748B", marginLeft: "auto" }}>{e.date} {e.time}</span>
-                </div>
-                <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>{e.direction === "inbound" ? "From" : "To"}: {e.contact}</div>
+        {/* Interaction context — AI summary + emails, calls, meetings */}
+        {interactionCtx && (
+          <div style={{ ...s.contextBox, maxHeight: contextExpanded ? 500 : 200 }}>
+            {/* AI Summary */}
+            {interactionCtx.summary && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: "#8B5CF6", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>Where things stand</div>
+                <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{interactionCtx.summary}</div>
               </div>
-            ))}
+            )}
+
+            {/* Recent emails */}
+            {interactionCtx.emails?.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#3B82F6", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>
+                  Emails ({interactionCtx.emails.length})
+                </div>
+                {interactionCtx.emails.slice(0, contextExpanded ? 8 : 3).map((e, i) => (
+                  <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #334155" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                      <span style={{ color: "#F1F5F9", fontWeight: 500 }}>{e.subject}</span>
+                      <span style={{ color: "#64748B", whiteSpace: "nowrap", marginLeft: 8 }}>{e.date?.split(",")[0]}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#64748B", marginTop: 1 }}>From: {e.from?.split("<")[0]?.trim()}</div>
+                    {contextExpanded && e.body && (
+                      <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 4, whiteSpace: "pre-wrap", maxHeight: 120, overflow: "hidden" }}>
+                        {e.body.slice(0, 500)}{e.body.length > 500 ? "..." : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Calls */}
+            {interactionCtx.calls?.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#8B5CF6", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>
+                  Calls ({interactionCtx.calls.length})
+                </div>
+                {interactionCtx.calls.map((c, i) => (
+                  <div key={i} style={{ fontSize: 11, color: "#CBD5E1", marginBottom: 3 }}>
+                    [{c.date}] {c.subject} — {c.contact}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Meetings */}
+            {interactionCtx.meetings?.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#F59E0B", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>
+                  Meetings ({interactionCtx.meetings.length})
+                </div>
+                {interactionCtx.meetings.map((m, i) => (
+                  <div key={i} style={{ fontSize: 11, color: "#CBD5E1", marginBottom: 3 }}>
+                    [{m.date}] {m.subject} {m.isPast ? "" : "(upcoming)"}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button style={{ background: "none", border: "none", color: "#8B5CF6", cursor: "pointer", fontSize: 11, fontWeight: 600, padding: 0 }}
+              onClick={() => setContextExpanded(!contextExpanded)}>
+              {contextExpanded ? "Show less" : "Show more context"}
+            </button>
           </div>
         )}
         {contextLoading && (
