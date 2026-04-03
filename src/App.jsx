@@ -477,8 +477,8 @@ export default function App() {
           if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
             currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
           }
-          if (actionQueue === "dealsAtRisk" && oppEdits.riskFilter) {
-            currentActions = currentActions.filter(a => a.priority === oppEdits.riskFilter);
+          if (oppEdits.priorityFilter) {
+            currentActions = currentActions.filter(a => a.priority === oppEdits.priorityFilter);
           }
           const isLive = !!liveActions;
           const countFor = (key) => (queueMap[key] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
@@ -517,7 +517,7 @@ export default function App() {
                         background: actionQueue === q.key ? q.color : "transparent",
                         color: actionQueue === q.key ? "#fff" : "#94A3B8",
                       }}
-                      onClick={() => setActionQueue(q.key)}
+                      onClick={() => { setActionQueue(q.key); setOppEdits(d => ({ ...d, priorityFilter: null })); setSelectedOpps(new Set()); }}
                     >
                       {q.label} {cnt > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 4, fontSize: 11 }}>{cnt}</span>}
                     </button>
@@ -538,14 +538,6 @@ export default function App() {
                       <span style={{ fontSize: 12, color: "#64748B", marginLeft: 4 }}>
                         {currentActions.filter(a => a.tag === "past-due").length} past due · {currentActions.filter(a => a.tag === "closing-soon").length} closing this week
                       </span>
-                    </>
-                  )}
-                  {actionQueue === "dealsAtRisk" && (
-                    <>
-                      <span style={{ fontSize: 12, color: "#64748B" }}>Filter:</span>
-                      <button style={s.btn(!oppEdits.riskFilter ? "#EF4444" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: null }))}>All ({currentActions.length})</button>
-                      <button style={s.btn(oppEdits.riskFilter === "critical" ? "#EF4444" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: "critical" }))}>Critical ({currentActions.filter(a => a.priority === "critical").length})</button>
-                      <button style={s.btn(oppEdits.riskFilter === "high" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: "high" }))}>High ({currentActions.filter(a => a.priority === "high").length})</button>
                     </>
                   )}
                   <span style={{ flex: 1 }} />
@@ -593,18 +585,27 @@ export default function App() {
               </div>
             )}
 
-            {/* Priority badges */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-              {["critical", "high", "medium", "low"].map(p => {
-                const count = currentActions.filter(a => a.priority === p && actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
-                if (count === 0) return null;
-                return (
-                  <span key={p} style={{ ...s.badge(PRIORITY_COLORS[p]), fontSize: 11 }}>
-                    {p.charAt(0).toUpperCase() + p.slice(1)}: {count}
-                  </span>
-                );
-              })}
-            </div>
+            {/* Priority filter — all tabs */}
+            {isLive && (
+              <div style={{ display: "flex", gap: 4, marginBottom: 16, alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "#64748B", marginRight: 4 }}>Priority:</span>
+                <button style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer", fontSize: 11, fontWeight: 600, background: !oppEdits.priorityFilter ? "#10B981" : "transparent", color: !oppEdits.priorityFilter ? "#fff" : "#94A3B8" }}
+                  onClick={() => setOppEdits(d => ({ ...d, priorityFilter: null }))}>
+                  All ({(liveActions ? queueMap[actionQueue] || [] : []).length})
+                </button>
+                {["critical", "high", "medium", "low"].map(p => {
+                  const unfilteredQueue = liveActions ? queueMap[actionQueue] || [] : [];
+                  const count = unfilteredQueue.filter(a => a.priority === p).length;
+                  if (count === 0) return null;
+                  return (
+                    <button key={p} style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer", fontSize: 11, fontWeight: 600, background: oppEdits.priorityFilter === p ? PRIORITY_COLORS[p] : "transparent", color: oppEdits.priorityFilter === p ? "#fff" : "#94A3B8" }}
+                      onClick={() => setOppEdits(d => ({ ...d, priorityFilter: d.priorityFilter === p ? null : p }))}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {currentActions.length === 0 && !actionsLoading && (
               <div style={{ ...s.card, cursor: "default", textAlign: "center", color: "#64748B", padding: 32 }}>
