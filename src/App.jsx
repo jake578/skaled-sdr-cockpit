@@ -445,28 +445,28 @@ export default function App() {
 
       {/* ── Metrics Bar ───────────────────────────────────────── */}
       <div style={s.metricsBar}>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("dashboard")}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("dashboard"); setPipelineTab("forecast"); }}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.weightedPipeline) : "..."}</div>
           <div style={s.metricLabel}>Weighted Forecast</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
             {liveMetrics ? `${liveMetrics.openDeals} deals` : "Loading"}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("pipeline")}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("opps"); }}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.totalPipeline) : fmt(pipelineTotal)}</div>
           <div style={s.metricLabel}>Total Pipeline</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
             {liveMetrics ? `${liveMetrics.openDeals} open` : `${displayOpps.length} open`}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("dashboard")}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("dashboard"); setPipelineTab("forecast"); }}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.wonAmountThisQuarter) : "..."}</div>
           <div style={s.metricLabel}>{liveMetrics?.quarterLabel || "Quarter"} Won</div>
           <div style={{ ...s.metricSub, color: "#10B981" }}>
             {liveMetrics ? `${liveMetrics.wonThisQuarter} deals closed` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("sfdcCleanup"); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("sfdcCleanup"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
           <div style={{ ...s.metricVal, color: liveMetrics?.pastDueDeals > 0 ? "#EF4444" : "#10B981" }}>
             {liveMetrics?.pastDueDeals ?? "..."}
           </div>
@@ -475,7 +475,7 @@ export default function App() {
             {liveMetrics ? `${liveMetrics.closingThisWeek} closing this week` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("internal"); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("internal"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
           <div style={s.metricVal}>{liveMetrics?.meetingsToday ?? "..."}</div>
           <div style={s.metricLabel}>Meetings Today</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
