@@ -116,19 +116,7 @@ export default function App() {
   const sfdc = useSalesforce();
   const [toast, setToast] = useState(null);
   const act = useActions(setToast);
-
-  // Force loading to end after 3 seconds as failsafe
-  const [authTimeout, setAuthTimeout] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setAuthTimeout(true), 3000); return () => clearTimeout(t); }, []);
-
-  // Show login if not authenticated
-  if (auth.loading && !authTimeout) return (
-    <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ color: "#64748B", fontSize: 14 }}>Loading...</div>
-    </div>
-  );
-  if (!auth.authenticated) return <LoginScreen onLogin={auth.login} />;
-  const [view, setView] = useState("actions"); // actions | outreach | pipeline
+  const [view, setView] = useState("actions");
   const [actions, setActions] = useState(() => {
     const saved = load();
     if (saved.actions) return DAILY_ACTIONS.map(a => ({ ...a, status: saved.actions[a.id] || a.status }));
@@ -367,6 +355,14 @@ export default function App() {
     window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
     setToast("Opened email client");
   }, []);
+
+  // ── Auth gate (after all hooks) ──────────────────────────────
+  if (auth.loading) return (
+    <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ color: "#64748B", fontSize: 14 }}>Loading...</div>
+    </div>
+  );
+  if (!auth.authenticated) return <LoginScreen onLogin={auth.login} />;
 
   // Filtered data based on search
   const q = search.toLowerCase();
