@@ -108,12 +108,23 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
     fetchContext();
   }, []);  // eslint-disable-line
 
+  const [sendError, setSendError] = useState(null);
+
   const handleSend = async () => {
     if (!to.trim() || !body.trim()) return;
     setSending(true);
-    const ok = await sendEmail({ to, subject, body });
+    setSendError(null);
+    try {
+      const ok = await sendEmail({ to, subject, body });
+      if (ok) {
+        if (onSend) onSend();
+      } else {
+        setSendError("Send failed — check the email address and try again");
+      }
+    } catch (e) {
+      setSendError(e.message || "Send failed");
+    }
     setSending(false);
-    if (ok && onSend) onSend();
   };
 
   return (
@@ -207,6 +218,13 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
             {contextUsed.map((src, i) => (
               <span key={i} style={{ fontSize: 10, background: "#334155", color: "#94A3B8", padding: "2px 8px", borderRadius: 4 }}>{src}</span>
             ))}
+          </div>
+        )}
+
+        {/* Send error */}
+        {sendError && (
+          <div style={{ background: "#7F1D1D", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#FCA5A5" }}>
+            {sendError}
           </div>
         )}
 

@@ -691,6 +691,19 @@ export default function App() {
                         {action.suggestedAction}
                       </div>
 
+                      {/* Critical: prompt to auto-draft */}
+                      {action.priority === "critical" && status === "pending" && (action.type === "email" || action.type === "follow-up") && (
+                        <div style={{
+                          background: "#8B5CF620", border: "1px solid #8B5CF640", borderRadius: 8, padding: "10px 14px",
+                          marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between",
+                        }}>
+                          <span style={{ fontSize: 12, color: "#C4B5FD" }}>Critical priority — AI draft ready</span>
+                          <button style={{ ...s.btn("#8B5CF6"), padding: "6px 14px" }} onClick={() => setShowEmailComposer({ action, mode: "ai" })}>
+                            Draft & Review
+                          </button>
+                        </div>
+                      )}
+
                       {/* Action buttons */}
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                         {status === "pending" && (
