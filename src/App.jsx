@@ -904,7 +904,7 @@ export default function App() {
                             onClick={async () => {
                               const batch = [...selectedOpps].map(id => ({
                                 object: "Opportunity", id,
-                                fields: { StageName: "Closed Lost" },
+                                fields: { StageName: "Closed Lost", Lost_Reason__c: "Other", Lost_Reason_Details__c: "Old" },
                               }));
                               const results = await act.batchUpdate(batch);
                               if (results.length) {
