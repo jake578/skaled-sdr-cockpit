@@ -86,12 +86,14 @@ export default function App() {
   const [copiedId, setCopiedId] = useState(null);
   const [activityFilter, setActivityFilter] = useState("all");
 
-  // ── Live SFDC Data ───────────────────────────────────────────
+  // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
   const [liveActivities, setLiveActivities] = useState(null);
   const [liveAccounts, setLiveAccounts] = useState(null);
   const [liveLeads, setLiveLeads] = useState(null);
   const [sfdcLoading, setSfdcLoading] = useState(false);
+  const [gmailActivities, setGmailActivities] = useState([]);
+  const [calendarActivities, setCalendarActivities] = useState([]);
 
   useEffect(() => {
     if (!sfdc.connected) return;
@@ -167,9 +169,37 @@ export default function App() {
     });
   }, [sfdc.connected]);
 
+  // ── Fetch Gmail + Calendar activities (always, no SFDC dependency) ──
+  useEffect(() => {
+    fetch("/.netlify/functions/gmail-activities")
+      .then(r => r.json())
+      .then(data => { if (data.activities?.length) setGmailActivities(data.activities); })
+      .catch(() => {});
+    fetch("/.netlify/functions/calendar-activities")
+      .then(r => r.json())
+      .then(data => { if (data.activities?.length) setCalendarActivities(data.activities); })
+      .catch(() => {});
+  }, []);
+
+  // Merge all activity sources: SFDC Events + Gmail + Calendar
+  const mergedActivities = (() => {
+    const all = [...(liveActivities || []), ...gmailActivities, ...calendarActivities];
+    if (all.length === 0) return RECENT_ACTIVITIES;
+    // Dedupe meetings that appear in both Calendar and Chorus (same date + similar subject)
+    const seen = new Set();
+    const deduped = all.filter(a => {
+      const key = `${a.date}-${a.subject?.substring(0, 20)?.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    deduped.sort((a, b) => (b.sortDate || b.date || "").localeCompare(a.sortDate || a.date || ""));
+    return deduped;
+  })();
+
   // Use live data when available, otherwise mock
   const displayOpps = liveOpps || OPPORTUNITIES;
-  const displayActivities = liveActivities || RECENT_ACTIVITIES;
+  const displayActivities = mergedActivities;
   const displayAccounts = liveAccounts || ACCOUNTS;
   const displayLeads = liveLeads || LEADS;
 
