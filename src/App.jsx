@@ -117,6 +117,8 @@ export default function App() {
   const [showDailyBrief, setShowDailyBrief] = useState(false);
   const [showEADelegate, setShowEADelegate] = useState(null); // action object
   const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [customActions, setCustomActions] = useState(() => load().customActions || []);
 
   // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -234,10 +236,13 @@ export default function App() {
       .catch(() => setActionsLoading(false));
   }, []);
 
-  // Persist action done/skipped statuses
+  // Persist action done/skipped statuses + custom actions
   useEffect(() => {
     save({ ...load(), actionStatuses });
   }, [actionStatuses]);
+  useEffect(() => {
+    save({ ...load(), customActions });
+  }, [customActions]);
 
   const markLiveAction = useCallback((id, status) => {
     setActionStatuses(prev => ({ ...prev, [id]: status }));
@@ -492,8 +497,8 @@ export default function App() {
         {/* ── DAILY ACTIONS VIEW ────────────────────────────── */}
         {view === "actions" && (() => {
           const queueMap = {
-            external: liveActions?.external || [],
-            internal: liveActions?.internal || [],
+            external: [...(liveActions?.external || []), ...customActions.filter(a => a.queue === "external")],
+            internal: [...(liveActions?.internal || []), ...customActions.filter(a => a.queue === "internal")],
             sfdcCleanup: liveActions?.sfdcCleanup || [],
             dealsAtRisk: liveActions?.dealsAtRisk || [],
           };
@@ -523,11 +528,10 @@ export default function App() {
                 {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" })}
                 {actionsLoading && <span style={{ fontSize: 12, color: "#F59E0B", marginLeft: 8 }}>Loading...</span>}
               </div>
-              {isLive && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={s.btn("#334155")} onClick={() => setActionStatuses({})}>Reset All</button>
-                </div>
-              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={s.btn("#3B82F6")} onClick={() => setShowNewTask(true)}>+ New Task</button>
+                {isLive && <button style={s.btn("#334155")} onClick={() => setActionStatuses({})}>Reset All</button>}
+              </div>
             </div>
 
             {/* Queue toggle */}
@@ -1520,6 +1524,118 @@ export default function App() {
       {showWeeklyDigest && (
         <WeeklyDigest onClose={() => setShowWeeklyDigest(false)} />
       )}
+
+      {/* New Task Modal */}
+      {showNewTask && (
+        <NewTaskModal
+          onClose={() => setShowNewTask(false)}
+          onCreate={(task) => {
+            setCustomActions(prev => [...prev, task]);
+            setShowNewTask(false);
+            setToast("Task added");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewTaskModal({ onClose, onCreate }) {
+  const [title, setTitle] = useState("");
+  const [contact, setContact] = useState("");
+  const [company, setCompany] = useState("");
+  const [details, setDetails] = useState("");
+  const [priority, setPriority] = useState("high");
+  const [queue, setQueue] = useState("external");
+  const [type, setType] = useState("follow-up");
+
+  const handleCreate = () => {
+    if (!title.trim()) return;
+    onCreate({
+      id: `custom-${Date.now()}`,
+      type,
+      priority,
+      queue,
+      title: title.trim(),
+      subtitle: [contact, company].filter(Boolean).join(" · ") || "—",
+      contact: contact || "—",
+      company: company || "—",
+      channel: type === "follow-up" ? "email" : type === "call" ? "phone" : type,
+      dueTime: "Today",
+      suggestedAction: details || title,
+    });
+  };
+
+  const btn = (bg) => ({
+    padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer",
+    fontSize: 13, fontWeight: 600, background: bg, color: "#fff",
+  });
+  const input = {
+    width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 6,
+    padding: "10px 12px", color: "#E2E8F0", fontSize: 13, marginBottom: 8, boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000,
+    }} onClick={onClose}>
+      <div style={{
+        background: "#0F172A", borderRadius: 12, padding: 24, width: 500, maxWidth: "90vw",
+        border: "1px solid #334155", boxShadow: "0 8px 30px rgba(0,0,0,0.4)",
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>New Task</div>
+          <button style={{ background: "none", border: "none", color: "#64748B", cursor: "pointer", fontSize: 18 }} onClick={onClose}>x</button>
+        </div>
+
+        <input style={input} placeholder="Task title *" value={title} onChange={e => setTitle(e.target.value)} autoFocus />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input style={{ ...input, marginBottom: 0 }} placeholder="Contact name" value={contact} onChange={e => setContact(e.target.value)} />
+          <input style={{ ...input, marginBottom: 0 }} placeholder="Company" value={company} onChange={e => setCompany(e.target.value)} />
+        </div>
+
+        <textarea style={{ ...input, minHeight: 80, resize: "vertical" }} placeholder="Details / context..." value={details} onChange={e => setDetails(e.target.value)} />
+
+        {/* Queue */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600 }}>Queue</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["external", "External", "#10B981"], ["internal", "Internal", "#3B82F6"]].map(([k, l, c]) => (
+              <button key={k} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer", fontSize: 12, fontWeight: 600, background: queue === k ? c : "transparent", color: queue === k ? "#fff" : "#94A3B8" }}
+                onClick={() => setQueue(k)}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Priority */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600 }}>Priority</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["critical", "#EF4444"], ["high", "#F59E0B"], ["medium", "#3B82F6"], ["low", "#64748B"]].map(([k, c]) => (
+              <button key={k} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer", fontSize: 12, fontWeight: 600, textTransform: "capitalize", background: priority === k ? c : "transparent", color: priority === k ? "#fff" : "#94A3B8" }}
+                onClick={() => setPriority(k)}>{k}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Type */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600 }}>Type</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["follow-up", "Follow-up"], ["email", "Email"], ["call", "Call"], ["meeting", "Meeting"], ["admin", "Admin"]].map(([k, l]) => (
+              <button key={k} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer", fontSize: 12, fontWeight: 600, background: type === k ? "#334155" : "transparent", color: type === k ? "#F1F5F9" : "#94A3B8" }}
+                onClick={() => setType(k)}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button style={{ ...btn("#10B981"), opacity: !title.trim() ? 0.5 : 1 }} disabled={!title.trim()} onClick={handleCreate}>Create Task</button>
+          <button style={btn("#334155")} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
