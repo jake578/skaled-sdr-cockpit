@@ -431,6 +431,60 @@ export default async (req) => {
     actions.external.sort(sortByPriority);
     actions.internal.sort(sortByPriority);
 
+    // ── AI Enrichment: generate specific suggested actions ────
+    try {
+      const allActions = [
+        ...actions.external.slice(0, 8).map(a => ({ queue: "external", ...a })),
+        ...actions.internal.slice(0, 5).map(a => ({ queue: "internal", ...a })),
+        ...actions.sfdcCleanup.slice(0, 5).map(a => ({ queue: "sfdcCleanup", ...a })),
+        ...actions.dealsAtRisk.slice(0, 5).map(a => ({ queue: "dealsAtRisk", ...a })),
+      ];
+
+      if (allActions.length > 0) {
+        const actionSummary = allActions.map((a, i) =>
+          `${i}. [${a.priority}] ${a.title} | ${a.subtitle || ""} | Current suggestion: ${a.suggestedAction || "none"}`
+        ).join("\n");
+
+        const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": process.env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1500,
+            system: `You are Jake Dunlap's action assistant. Jake is CEO of Skaled Consulting. For each action below, write a specific 1-2 sentence suggested action that tells Jake exactly what to do. Be concrete — name the person, reference the deal context, suggest the specific email/call/update to make. No generic advice like "review and follow up." Instead say things like "Send Amy the revised SOW with the Q3 timeline she asked about" or "Push this to Closed Lost — no response in 45 days and they went with a competitor." Plain text only, no markdown, no asterisks.`,
+            messages: [{
+              role: "user",
+              content: `Today is ${now.toISOString().split("T")[0]}. Here are Jake's actions. Return a JSON array of objects with "index" (number) and "suggestion" (string) for each:\n\n${actionSummary}`,
+            }],
+          }),
+        });
+
+        if (claudeRes.ok) {
+          const data = await claudeRes.json();
+          const text = data.content?.[0]?.text || "";
+          try {
+            const jsonMatch = text.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+              const suggestions = JSON.parse(jsonMatch[0]);
+              suggestions.forEach(s => {
+                const action = allActions[s.index];
+                if (action && s.suggestion) {
+                  // Find and update in the original queue
+                  const queue = actions[action.queue];
+                  const match = queue?.find(a => a.id === action.id);
+                  if (match) match.suggestedAction = s.suggestion;
+                }
+              });
+            }
+          } catch { /* Parse failed — keep original suggestions */ }
+        }
+      }
+    } catch { /* AI enrichment failed — keep original suggestions */ }
+
     return Response.json(actions);
   } catch (e) {
     return Response.json({ error: e.message, external: [], internal: [], sfdcCleanup: [], dealsAtRisk: [] }, { status: 500 });
