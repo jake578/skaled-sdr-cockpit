@@ -186,9 +186,12 @@ export default function App() {
         });
       });
 
-      // Sort by date descending
-      allActivities.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || ""));
-      if (allActivities.length) setLiveActivities(allActivities);
+      // Filter out records with null/missing key data, then sort by date descending
+      const cleanActivities = allActivities.filter(a =>
+        a.company !== "—" || a.contact !== "—"
+      );
+      cleanActivities.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || ""));
+      if (cleanActivities.length) setLiveActivities(cleanActivities);
 
       if (accounts && accounts.length) setLiveAccounts(accounts.map(a => ({
         name: a.Name, industry: a.Industry || "—", employees: a.NumberOfEmployees || 0,
