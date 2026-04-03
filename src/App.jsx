@@ -143,10 +143,13 @@ export default function App() {
         });
       });
 
-      // Filter out records with null/missing key data, then sort by date descending
-      const cleanActivities = allActivities.filter(a =>
-        a.company !== "—" || a.contact !== "—"
-      );
+      // Filter out internal Skaled activities and records with null key data
+      const internalKeywords = ["skaled", "revoptics", "l10", "1:1", "all-hands", "staffing sync", "leadership meeting", "p&l", "invoices and cash flow", "everhour", "marketing l10"];
+      const cleanActivities = allActivities.filter(a => {
+        if (a.company === "—" && a.contact === "—") return false;
+        const text = `${a.subject} ${a.company}`.toLowerCase();
+        return !internalKeywords.some(kw => text.includes(kw));
+      });
       cleanActivities.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || ""));
       if (cleanActivities.length) setLiveActivities(cleanActivities);
 
