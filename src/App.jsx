@@ -117,8 +117,12 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const act = useActions(setToast);
 
+  // Force loading to end after 3 seconds as failsafe
+  const [authTimeout, setAuthTimeout] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setAuthTimeout(true), 3000); return () => clearTimeout(t); }, []);
+
   // Show login if not authenticated
-  if (auth.loading) return (
+  if (auth.loading && !authTimeout) return (
     <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ color: "#64748B", fontSize: 14 }}>Loading...</div>
     </div>

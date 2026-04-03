@@ -4,23 +4,18 @@ export function useAuth() {
   const [authenticated, setAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const checkAuth = useCallback(async () => {
-    try {
-      const res = await fetch("/.netlify/functions/auth-check", {
-        credentials: "same-origin",
-      });
-      const data = await res.json();
-      setAuthenticated(data.authenticated === true);
-    } catch {
-      setAuthenticated(false);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
+    fetch("/.netlify/functions/auth-check", { credentials: "same-origin" })
+      .then(r => r.ok ? r.json() : { authenticated: false })
+      .then(data => {
+        setAuthenticated(data.authenticated === true);
+        setLoading(false);
+      })
+      .catch(() => {
+        setAuthenticated(false);
+        setLoading(false);
+      });
+  }, []);
 
   const login = useCallback(async (password) => {
     try {
@@ -35,7 +30,7 @@ export function useAuth() {
         setAuthenticated(true);
         return { success: true };
       }
-      return { success: false, error: data.error || "Login failed" };
+      return { success: false, error: data.error || "Invalid password" };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -47,9 +42,7 @@ export function useAuth() {
         method: "POST",
         credentials: "same-origin",
       });
-    } catch {
-      // Clear state regardless
-    }
+    } catch { /* clear state regardless */ }
     setAuthenticated(false);
   }, []);
 
