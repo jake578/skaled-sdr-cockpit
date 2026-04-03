@@ -15,6 +15,7 @@ import EADelegate from "./components/EADelegate";
 import WeeklyDigest from "./components/WeeklyDigest";
 import ClientHealth from "./components/ClientHealth";
 import RevenueForecast from "./components/RevenueForecast";
+import PipelineDetail from "./components/PipelineDetail";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -152,6 +153,7 @@ export default function App() {
   const [showEADelegate, setShowEADelegate] = useState(null); // action object
   const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
+  const [showPipelineDetail, setShowPipelineDetail] = useState(false);
   const [customActions, setCustomActions] = useState(() => load().customActions || []);
   const [closedWonOpps, setClosedWonOpps] = useState(null);
 
@@ -517,7 +519,7 @@ export default function App() {
             {liveMetrics ? `${liveMetrics.openDeals} deals` : "Loading"}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("opps"); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => setShowPipelineDetail(true)}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.totalPipeline) : fmt(pipelineTotal)}</div>
           <div style={s.metricLabel}>Total Pipeline</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
@@ -1668,6 +1670,14 @@ export default function App() {
 
       {showWeeklyDigest && (
         <WeeklyDigest onClose={() => setShowWeeklyDigest(false)} />
+      )}
+
+      {showPipelineDetail && (
+        <PipelineDetail
+          onClose={() => setShowPipelineDetail(false)}
+          onEditOpp={(id) => { setShowPipelineDetail(false); setView("pipeline"); setPipelineTab("opps"); setTimeout(() => { setEditingOpp(id); const opp = displayOpps.find(o => o.id === id); if (opp) setOppEdits({ StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", Group_Forecast_Category__c: opp.forecastCategory || "" }); }, 100); }}
+          onInspectOpp={(data) => { setShowPipelineDetail(false); setShowDealInspector(data); }}
+        />
       )}
 
       {/* New Task Modal */}
