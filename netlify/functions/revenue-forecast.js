@@ -115,7 +115,7 @@ export default async (req) => {
 
     // Top deals
     const topDeals = openOpps
-      .filter(o => o.Amount)
+      .filter(o => o.Amount && o.Group_Forecast_Category__c !== "Omitted" && o.Group_Forecast_Category__c !== "Pipeline")
       .sort((a, b) => (b.Amount || 0) - (a.Amount || 0))
       .slice(0, 10)
       .map(o => ({
