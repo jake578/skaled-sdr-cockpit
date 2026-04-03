@@ -4,6 +4,7 @@ import {
   OPPORTUNITIES, RECENT_ACTIVITIES, ACCOUNTS, LEADS,
   WEEKLY_ACTIVITY, PIPELINE_WEEKLY,
 } from "./mockData";
+import { useSalesforce } from "./useSalesforce";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -71,6 +72,7 @@ const ACTIVITY_ICONS = { email: "✉", call: "📞", linkedin: "💬", meeting: 
 
 // ── Main App ───────────────────────────────────────────────────
 export default function App() {
+  const sfdc = useSalesforce();
   const [view, setView] = useState("actions"); // actions | outreach | pipeline
   const [actions, setActions] = useState(() => {
     const saved = load();
@@ -82,6 +84,56 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [pipelineTab, setPipelineTab] = useState("opps"); // opps | activities | accounts | leads
   const [copiedId, setCopiedId] = useState(null);
+
+  // ── Live SFDC Data ───────────────────────────────────────────
+  const [liveOpps, setLiveOpps] = useState(null);
+  const [liveActivities, setLiveActivities] = useState(null);
+  const [liveAccounts, setLiveAccounts] = useState(null);
+  const [liveLeads, setLiveLeads] = useState(null);
+  const [sfdcLoading, setSfdcLoading] = useState(false);
+
+  useEffect(() => {
+    if (!sfdc.connected) return;
+    setSfdcLoading(true);
+    Promise.all([
+      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, NextStep, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY Amount DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Subject, ActivityDate, Status, WhoId, Who.Name, What.Name, AccountId, Account.Name, Type FROM Task WHERE ActivityDate >= LAST_N_DAYS:30 ORDER BY ActivityDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type, LastActivityDate, (SELECT Id FROM Contacts) FROM Account WHERE LastActivityDate >= LAST_N_DAYS:90 ORDER BY LastActivityDate DESC LIMIT 30`),
+      sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, LastActivityDate FROM Lead WHERE IsConverted = false ORDER BY LastActivityDate DESC LIMIT 30`),
+    ]).then(([opps, activities, accounts, leads]) => {
+      if (opps) setLiveOpps(opps.map(o => ({
+        id: o.Id, name: o.Name, account: o.Account?.Name || "—",
+        contact: "—", amount: o.Amount || 0, stage: o.StageName,
+        probability: o.Probability || 0, closeDate: o.CloseDate || "—",
+        lastActivity: o.LastActivityDate || "—", nextStep: o.NextStep || "—",
+        daysInStage: Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000),
+        source: o.LeadSource || "—",
+      })));
+      if (activities) setLiveActivities(activities.map(a => ({
+        date: a.ActivityDate || "—", type: (a.Type || "task").toLowerCase(),
+        subject: a.Subject || "—", contact: a.Who?.Name || "—",
+        company: a.Account?.Name || a.What?.Name || "—",
+        direction: a.Status === "Completed" ? "outbound" : "inbound",
+      })));
+      if (accounts) setLiveAccounts(accounts.map(a => ({
+        name: a.Name, industry: a.Industry || "—", employees: a.NumberOfEmployees || 0,
+        status: a.Type || "—", contacts: a.Contacts?.length || 0,
+        lastTouch: a.LastActivityDate || "—",
+      })));
+      if (leads) setLiveLeads(leads.map(l => ({
+        name: l.Name, company: l.Company || "—", title: l.Title || "—",
+        status: l.Status || "—", source: l.LeadSource || "—",
+        score: 0, lastTouch: l.LastActivityDate || "—",
+      })));
+      setSfdcLoading(false);
+    });
+  }, [sfdc.connected]);
+
+  // Use live data when available, otherwise mock
+  const displayOpps = liveOpps || OPPORTUNITIES;
+  const displayActivities = liveActivities || RECENT_ACTIVITIES;
+  const displayAccounts = liveAccounts || ACCOUNTS;
+  const displayLeads = liveLeads || LEADS;
 
   // Persist action statuses
   useEffect(() => {
@@ -124,16 +176,16 @@ export default function App() {
     !q || a.title.toLowerCase().includes(q) || a.subtitle.toLowerCase().includes(q) ||
     (a.contact && a.contact.toLowerCase().includes(q)) || (a.company && a.company.toLowerCase().includes(q))
   );
-  const filteredOpps = OPPORTUNITIES.filter(o =>
+  const filteredOpps = displayOpps.filter(o =>
     !q || o.name.toLowerCase().includes(q) || o.account.toLowerCase().includes(q) || o.contact.toLowerCase().includes(q)
   );
-  const filteredAccounts = ACCOUNTS.filter(a => !q || a.name.toLowerCase().includes(q) || a.industry.toLowerCase().includes(q));
-  const filteredLeads = LEADS.filter(l => !q || l.name.toLowerCase().includes(q) || l.company.toLowerCase().includes(q));
+  const filteredAccounts = displayAccounts.filter(a => !q || a.name.toLowerCase().includes(q) || a.industry.toLowerCase().includes(q));
+  const filteredLeads = displayLeads.filter(l => !q || l.name.toLowerCase().includes(q) || l.company.toLowerCase().includes(q));
 
   // Stats
   const doneCount = actions.filter(a => a.status === "done").length;
   const totalActions = actions.length;
-  const pipelineTotal = OPPORTUNITIES.reduce((s, o) => s + o.amount, 0);
+  const pipelineTotal = displayOpps.reduce((s, o) => s + (o.amount || 0), 0);
 
   // ── Styles ────────────────────────────────────────────────────
   const s = {
@@ -225,7 +277,32 @@ export default function App() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {sfdc.connected ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
+              <span style={{ fontSize: 11, color: "#10B981", fontWeight: 600 }}>SFDC{sfdc.user ? `: ${sfdc.user.name}` : ""}</span>
+              {sfdcLoading && <span style={{ fontSize: 11, color: "#F59E0B" }}>Loading...</span>}
+              <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={sfdc.disconnect}>Disconnect</button>
+            </div>
+          ) : (
+            <button
+              style={{ ...s.btn("#00A1E0"), fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}
+              onClick={sfdc.connect}
+            >
+              <span style={{ fontSize: 14 }}>☁</span> Connect Salesforce
+            </button>
+          )}
+          {liveOpps && <span style={{ fontSize: 10, color: "#64748B", background: "#1E293B", padding: "2px 6px", borderRadius: 3 }}>LIVE</span>}
+        </div>
       </div>
+
+      {/* ── SFDC Error Banner ─────────────────────────────────── */}
+      {sfdc.error && (
+        <div style={{ background: "#7F1D1D", padding: "8px 24px", fontSize: 12, color: "#FCA5A5" }}>
+          Salesforce error: {sfdc.error}
+        </div>
+      )}
 
       {/* ── Metrics Bar ───────────────────────────────────────── */}
       <div style={s.metricsBar}>
@@ -271,7 +348,7 @@ export default function App() {
           <div style={s.metricVal}>{fmt(pipelineTotal)}</div>
           <div style={s.metricLabel}>Active Pipeline</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            {OPPORTUNITIES.length} open opps
+            {displayOpps.length} open opps
           </div>
         </div>
       </div>
@@ -527,7 +604,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {RECENT_ACTIVITIES.map((act, i) => (
+                    {displayActivities.map((act, i) => (
                       <tr key={i} className="row-hover">
                         <td style={{ ...s.td, whiteSpace: "nowrap" }}>{act.date}</td>
                         <td style={s.td}>{ACTIVITY_ICONS[act.type] || "▸"} {act.type}</td>
