@@ -95,6 +95,8 @@ export default function App() {
   const [liveActions, setLiveActions] = useState(null);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
+  const [selectedOpps, setSelectedOpps] = useState(new Set());
+  const [bulkAction, setBulkAction] = useState(null);
   const [composing, setComposing] = useState(null); // action id being composed
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
   const [editingOpp, setEditingOpp] = useState(null);
@@ -845,14 +847,177 @@ export default function App() {
             {/* Opportunities */}
             {pipelineTab === "opps" && (
               <div>
-                <div style={s.sectionTitle}>Open Opportunities — {fmt(pipelineTotal)} total pipeline</div>
-                {filteredOpps.map(opp => (
-                  <div key={opp.id} className="card-hover" style={s.card}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={s.sectionTitle}>Open Opportunities — {fmt(pipelineTotal)} total pipeline</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94A3B8", cursor: "pointer" }}>
+                      <input type="checkbox" style={{ accentColor: "#10B981" }}
+                        checked={selectedOpps.size === filteredOpps.length && filteredOpps.length > 0}
+                        onChange={e => {
+                          if (e.target.checked) setSelectedOpps(new Set(filteredOpps.map(o => o.id)));
+                          else setSelectedOpps(new Set());
+                        }}
+                      /> Select All
+                    </label>
+                    {selectedOpps.size > 0 && <span style={{ fontSize: 12, color: "#F1F5F9", fontWeight: 600 }}>{selectedOpps.size} selected</span>}
+                  </div>
+                </div>
+
+                {/* Bulk action bar */}
+                {selectedOpps.size > 0 && (
+                  <div style={{
+                    background: "#1E293B", borderRadius: 8, padding: "12px 16px", marginBottom: 12,
+                    border: "1px solid #334155", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+                  }}>
+                    <span style={{ fontSize: 13, color: "#F1F5F9", fontWeight: 600, marginRight: 8 }}>{selectedOpps.size} opp{selectedOpps.size > 1 ? "s" : ""} selected:</span>
+                    <button style={s.btn("#EF4444")} onClick={() => setBulkAction(bulkAction === "closeLost" ? null : "closeLost")}>
+                      Bulk Close Lost
+                    </button>
+                    <button style={s.btn("#F59E0B")} onClick={() => setBulkAction(bulkAction === "updateForecast" ? null : "updateForecast")}>
+                      Bulk Update Forecast
+                    </button>
+                    <button style={s.btn("#3B82F6")} onClick={() => setBulkAction(bulkAction === "updateStage" ? null : "updateStage")}>
+                      Bulk Change Stage
+                    </button>
+                    <button style={s.btn("#334155")} onClick={() => { setSelectedOpps(new Set()); setBulkAction(null); }}>Clear</button>
+                  </div>
+                )}
+
+                {/* Bulk action panel */}
+                {bulkAction && selectedOpps.size > 0 && (
+                  <div style={{
+                    background: "#0F172A", borderRadius: 8, padding: 16, marginBottom: 12,
+                    border: bulkAction === "closeLost" ? "1px solid #EF4444" : "1px solid #334155",
+                  }}>
+                    {bulkAction === "closeLost" && (
                       <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
-                        <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
-                          {opp.contact} · {opp.source}
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#EF4444", marginBottom: 8 }}>
+                          Close {selectedOpps.size} Opportunit{selectedOpps.size > 1 ? "ies" : "y"} as Lost
+                        </div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", marginBottom: 12 }}>
+                          {filteredOpps.filter(o => selectedOpps.has(o.id)).map(o => o.name).join(", ")}
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            style={{ ...s.btn("#EF4444"), opacity: act.sending === "batch" ? 0.6 : 1 }}
+                            disabled={act.sending === "batch"}
+                            onClick={async () => {
+                              const batch = [...selectedOpps].map(id => ({
+                                object: "Opportunity", id,
+                                fields: { StageName: "Closed Lost" },
+                              }));
+                              const results = await act.batchUpdate(batch);
+                              if (results.length) {
+                                setSelectedOpps(new Set());
+                                setBulkAction(null);
+                                // Refresh opps
+                                window.location.reload();
+                              }
+                            }}
+                          >
+                            {act.sending === "batch" ? "Closing..." : `Confirm Close Lost (${selectedOpps.size})`}
+                          </button>
+                          <button style={s.btn("#334155")} onClick={() => setBulkAction(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                    {bulkAction === "updateForecast" && (
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#F59E0B", marginBottom: 8 }}>
+                          Update Forecast Category on {selectedOpps.size} Opp{selectedOpps.size > 1 ? "s" : ""}
+                        </div>
+                        <select
+                          style={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 10, width: 200 }}
+                          value={oppEdits.bulkForecast || ""}
+                          onChange={e => setOppEdits(d => ({ ...d, bulkForecast: e.target.value }))}
+                        >
+                          <option value="">Select category</option>
+                          <option>Omitted</option><option>Pipeline</option><option>Best Case</option>
+                          <option>Commit</option><option>Closed</option>
+                        </select>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            style={{ ...s.btn("#F59E0B"), opacity: act.sending === "batch" || !oppEdits.bulkForecast ? 0.6 : 1 }}
+                            disabled={act.sending === "batch" || !oppEdits.bulkForecast}
+                            onClick={async () => {
+                              const batch = [...selectedOpps].map(id => ({
+                                object: "Opportunity", id,
+                                fields: { Group_Forecast_Category__c: oppEdits.bulkForecast },
+                              }));
+                              const results = await act.batchUpdate(batch);
+                              if (results.length) {
+                                setSelectedOpps(new Set());
+                                setBulkAction(null);
+                                setOppEdits({});
+                                window.location.reload();
+                              }
+                            }}
+                          >
+                            {act.sending === "batch" ? "Updating..." : `Update ${selectedOpps.size} Opps`}
+                          </button>
+                          <button style={s.btn("#334155")} onClick={() => setBulkAction(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                    {bulkAction === "updateStage" && (
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#3B82F6", marginBottom: 8 }}>
+                          Change Stage on {selectedOpps.size} Opp{selectedOpps.size > 1 ? "s" : ""}
+                        </div>
+                        <select
+                          style={{ background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 10, width: 200 }}
+                          value={oppEdits.bulkStage || ""}
+                          onChange={e => setOppEdits(d => ({ ...d, bulkStage: e.target.value }))}
+                        >
+                          <option value="">Select stage</option>
+                          <option>Prospecting</option><option>Qualification</option><option>Needs Analysis</option>
+                          <option>Value Proposition</option><option>Proposal/Price Quote</option><option>Negotiation/Review</option>
+                          <option>Closed Won</option><option>Closed Lost</option>
+                        </select>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            style={{ ...s.btn("#3B82F6"), opacity: act.sending === "batch" || !oppEdits.bulkStage ? 0.6 : 1 }}
+                            disabled={act.sending === "batch" || !oppEdits.bulkStage}
+                            onClick={async () => {
+                              const batch = [...selectedOpps].map(id => ({
+                                object: "Opportunity", id,
+                                fields: { StageName: oppEdits.bulkStage },
+                              }));
+                              const results = await act.batchUpdate(batch);
+                              if (results.length) {
+                                setSelectedOpps(new Set());
+                                setBulkAction(null);
+                                setOppEdits({});
+                                window.location.reload();
+                              }
+                            }}
+                          >
+                            {act.sending === "batch" ? "Updating..." : `Update ${selectedOpps.size} Opps`}
+                          </button>
+                          <button style={s.btn("#334155")} onClick={() => setBulkAction(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {filteredOpps.map(opp => (
+                  <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: selectedOpps.has(opp.id) ? "3px solid #10B981" : undefined }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <input type="checkbox" style={{ accentColor: "#10B981", marginTop: 4 }}
+                          checked={selectedOpps.has(opp.id)}
+                          onChange={e => {
+                            const next = new Set(selectedOpps);
+                            if (e.target.checked) next.add(opp.id); else next.delete(opp.id);
+                            setSelectedOpps(next);
+                          }}
+                        />
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
+                          <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
+                            {opp.contact} · {opp.source}
+                          </div>
                         </div>
                       </div>
                       <div style={{ textAlign: "right" }}>
