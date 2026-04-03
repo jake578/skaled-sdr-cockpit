@@ -26,7 +26,7 @@ export default async (req) => {
         (SELECT Id, Name, Amount, StageName, CloseDate, IsClosed, IsWon FROM Opportunities ORDER BY CloseDate DESC LIMIT 10),
         (SELECT Id FROM Contacts)
       FROM Account
-      WHERE Id IN (SELECT AccountId FROM Opportunity WHERE IsWon = true OR IsClosed = false)
+      WHERE Id IN (SELECT AccountId FROM Opportunity WHERE IsWon = true AND CloseDate >= LAST_N_DAYS:60)
       ORDER BY LastActivityDate DESC NULLS LAST
       LIMIT 30
     `);
