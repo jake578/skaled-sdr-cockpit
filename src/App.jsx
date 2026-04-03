@@ -523,15 +523,62 @@ export default function App() {
               </div>
             )}
 
-            {/* Sort controls for SFDC Cleanup */}
-            {actionQueue === "sfdcCleanup" && currentActions.length > 0 && (
-              <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "#64748B" }}>Sort:</span>
-                <button style={s.btn(oppEdits.cleanupSort === "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "asc" }))}>Oldest first</button>
-                <button style={s.btn(oppEdits.cleanupSort !== "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "desc" }))}>Newest first</button>
-                <span style={{ fontSize: 12, color: "#64748B", marginLeft: 8 }}>
-                  {currentActions.filter(a => a.tag === "past-due").length} past due · {currentActions.filter(a => a.tag === "closing-soon").length} closing this week
-                </span>
+            {/* Sort controls + bulk actions for SFDC Cleanup / Deals at Risk */}
+            {(actionQueue === "sfdcCleanup" || actionQueue === "dealsAtRisk") && currentActions.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {actionQueue === "sfdcCleanup" && (
+                    <>
+                      <span style={{ fontSize: 12, color: "#64748B" }}>Sort:</span>
+                      <button style={s.btn(oppEdits.cleanupSort === "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "asc" }))}>Oldest first</button>
+                      <button style={s.btn(oppEdits.cleanupSort !== "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "desc" }))}>Newest first</button>
+                      <span style={{ fontSize: 12, color: "#64748B", marginLeft: 4 }}>
+                        {currentActions.filter(a => a.tag === "past-due").length} past due · {currentActions.filter(a => a.tag === "closing-soon").length} closing this week
+                      </span>
+                    </>
+                  )}
+                  <span style={{ flex: 1 }} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94A3B8", cursor: "pointer" }}>
+                    <input type="checkbox" style={{ accentColor: "#10B981" }}
+                      checked={selectedOpps.size === currentActions.length && currentActions.length > 0}
+                      onChange={e => {
+                        if (e.target.checked) setSelectedOpps(new Set(currentActions.map(a => a.id.replace("opp-", ""))));
+                        else setSelectedOpps(new Set());
+                      }}
+                    /> Select All
+                  </label>
+                  {selectedOpps.size > 0 && <span style={{ fontSize: 12, color: "#F1F5F9", fontWeight: 600 }}>{selectedOpps.size} selected</span>}
+                </div>
+                {selectedOpps.size > 0 && (
+                  <div style={{
+                    background: "#1E293B", borderRadius: 8, padding: "10px 14px", marginTop: 8,
+                    border: "1px solid #334155", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+                  }}>
+                    <button style={s.btn("#EF4444")} disabled={act.sending === "batch"} onClick={async () => {
+                      const batch = [...selectedOpps].map(id => ({
+                        object: "Opportunity", id,
+                        fields: { StageName: "Closed Lost", Lost_Reason__c: "Other", Lost_Reason_Details__c: "Old" },
+                      }));
+                      const results = await act.batchUpdate(batch);
+                      if (results.length) { setSelectedOpps(new Set()); window.location.reload(); }
+                    }}>
+                      {act.sending === "batch" ? "Closing..." : `Bulk Close Lost (${selectedOpps.size})`}
+                    </button>
+                    <button style={s.btn("#8B5CF6")} disabled={act.sending === "batch"} onClick={async () => {
+                      const batch = [...selectedOpps].map(id => {
+                        const action = currentActions.find(a => a.id === `opp-${id}`);
+                        const current = action?.closeDate ? new Date(action.closeDate) : new Date();
+                        const pushed = new Date(current.getTime() + 14 * 86400000);
+                        return { object: "Opportunity", id, fields: { CloseDate: pushed.toISOString().split("T")[0] } };
+                      });
+                      const results = await act.batchUpdate(batch);
+                      if (results.length) { setSelectedOpps(new Set()); window.location.reload(); }
+                    }}>
+                      Push Close +2 Weeks
+                    </button>
+                    <button style={s.btn("#334155")} onClick={() => setSelectedOpps(new Set())}>Clear</button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -571,6 +618,18 @@ export default function App() {
                   onClick={() => setExpandedAction(expanded ? null : action.id)}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    {(actionQueue === "sfdcCleanup" || actionQueue === "dealsAtRisk") && action.id?.startsWith("opp-") && (
+                      <input type="checkbox" style={{ accentColor: "#10B981", marginTop: 4, marginRight: 8 }}
+                        checked={selectedOpps.has(action.id.replace("opp-", ""))}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => {
+                          const oppId = action.id.replace("opp-", "");
+                          const next = new Set(selectedOpps);
+                          if (e.target.checked) next.add(oppId); else next.delete(oppId);
+                          setSelectedOpps(next);
+                        }}
+                      />
+                    )}
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span style={{ fontSize: 16 }}>{ACTION_TYPE_ICONS[action.type] || "▸"}</span>
