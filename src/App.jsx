@@ -470,14 +470,14 @@ export default function App() {
             {liveMetrics ? `${liveMetrics.closingThisWeek} closing this week` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("internal"); }}>
           <div style={s.metricVal}>{liveMetrics?.meetingsToday ?? "..."}</div>
           <div style={s.metricLabel}>Meetings Today</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
             {liveMetrics ? `${liveMetrics.unreadEmails} unread emails` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("leads"); }}>
           <div style={s.metricVal}>{liveMetrics?.newLeadsThisWeek ?? "..."}</div>
           <div style={s.metricLabel}>New Leads (7d)</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
