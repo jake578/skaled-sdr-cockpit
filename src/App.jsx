@@ -474,6 +474,8 @@ export default function App() {
             dealsAtRisk: liveActions?.dealsAtRisk || [],
           };
           let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : filteredActions;
+          // Remove done/skipped items
+          currentActions = currentActions.filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped");
           if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
             currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
           }
