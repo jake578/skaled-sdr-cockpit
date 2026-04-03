@@ -103,7 +103,7 @@ export default async (req) => {
         // Chorus calls mentioning account
         if (accountName && accountName !== "—") {
           const chorusCalls = await sfdcQuery(
-            `SELECT Subject, StartDateTime, Who.Name, What.Name FROM Event WHERE Subject LIKE 'Chorus%' AND What.Name LIKE '%${accountName.replace(/'/g, "\\'")}%' ORDER BY StartDateTime DESC LIMIT 5`
+            `SELECT Subject, StartDateTime, Who.Name, What.Name FROM Event WHERE Subject LIKE 'Chorus%' AND What.Name LIKE '%${accountName.replace(/'/g, "")}%' ORDER BY StartDateTime DESC LIMIT 5`
           );
           if (chorusCalls.length) {
             callContext += `\n## Recent Calls (Chorus)\n`;
@@ -237,20 +237,31 @@ Body should be plain text with \\n line breaks, not HTML. Do not include a signa
   }
 };
 
-// Extract plain text body from Gmail message payload (same approach as meeting prep build)
+function decodeBase64(data) {
+  try {
+    const fixed = data.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(fixed);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
 function extractBody(payload) {
   if (!payload) return "";
 
   if (payload.mimeType === "text/plain") {
     const data = payload.body?.data || "";
-    if (data) return atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+    if (data) return decodeBase64(data);
   }
 
   const parts = payload.parts || [];
   for (const part of parts) {
     if (part.mimeType === "text/plain") {
       const data = part.body?.data || "";
-      if (data) return atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+      if (data) return decodeBase64(data);
     }
   }
 
@@ -259,7 +270,8 @@ function extractBody(payload) {
     if (result) return result;
   }
 
-  return "";
+  // Fallback: try snippet from parent
+  return payload.body?.data ? decodeBase64(payload.body.data) : "";
 }
 
 export const config = { path: "/.netlify/functions/ai-email-writer" };
