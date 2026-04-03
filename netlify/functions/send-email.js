@@ -12,29 +12,24 @@ export default async (req) => {
 
     const token = await getAccessToken();
 
-    // Build RFC 2822 email with proper encoding
-    const headers = [
-      `From: me`,
-      `To: ${to}`,
-      cc ? `Cc: ${cc}` : "",
-      bcc ? `Bcc: ${bcc}` : "",
-      `Subject: =?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
-      `MIME-Version: 1.0`,
-      `Content-Type: text/html; charset=UTF-8`,
-      `Content-Transfer-Encoding: base64`,
-    ].filter(Boolean).join("\r\n");
-
     // Convert body to HTML
     const htmlBody = body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
     const fullHtml = `<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #333;">${htmlBody}</body></html>`;
 
-    // Encode body as base64
-    const bodyBase64 = btoa(unescape(encodeURIComponent(fullHtml)));
+    // Build RFC 2822 email
+    const emailParts = [
+      `From: me`,
+      `To: ${to}`,
+      cc ? `Cc: ${cc}` : "",
+      bcc ? `Bcc: ${bcc}` : "",
+      `Subject: =?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
+      ``,
+      fullHtml,
+    ].filter(Boolean).join("\r\n");
 
-    const rawEmail = `${headers}\r\n\r\n${bodyBase64}`;
-
-    // URL-safe base64 encode the entire message
-    const raw = btoa(unescape(encodeURIComponent(rawEmail)))
+    const raw = Buffer.from(emailParts).toString("base64")
       .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
     const res = await fetch(

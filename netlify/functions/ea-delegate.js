@@ -80,16 +80,19 @@ export default async (req) => {
 
     const token = await getAccessToken();
 
-    // Build RFC 2822 email
-    const rawLines = [
+    // Build RFC 2822 email with proper MIME encoding
+    const emailParts = [
+      `From: me`,
       `To: ${eaEmail}`,
-      `Subject: ${subject}`,
-      `Content-Type: text/html; charset=utf-8`,
+      `Subject: =?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
       ``,
       body,
     ];
 
-    const raw = btoa(unescape(encodeURIComponent(rawLines.join("\r\n"))))
+    const rawEmail = emailParts.join("\r\n");
+    const raw = Buffer.from(rawEmail).toString("base64")
       .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
     const gmailRes = await fetch(

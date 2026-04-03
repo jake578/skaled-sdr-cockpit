@@ -104,12 +104,14 @@ export default function EADelegate({ action, onClose, onDelegated }) {
         }),
       });
       const data = await res.json();
-      if (data.success !== false) {
+      if (data.success === true) {
         setSent(true);
         if (onDelegated) onDelegated(action);
+      } else {
+        alert("Delegate failed: " + (data.error || JSON.stringify(data)));
       }
-    } catch {
-      // silent fail
+    } catch (e) {
+      alert("Delegate failed: " + e.message);
     }
     setSending(false);
   };
