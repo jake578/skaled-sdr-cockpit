@@ -1,5 +1,4 @@
 import { getStore } from "@netlify/blobs";
-const crypto = await import("node:crypto");
 
 function parseCookies(cookieHeader) {
   const cookies = {};
@@ -11,88 +10,47 @@ function parseCookies(cookieHeader) {
   return cookies;
 }
 
-function verifyToken(secret, tokenValue) {
+async function verifyToken(secret, tokenValue) {
   if (!tokenValue || !tokenValue.includes(".")) return false;
-
   const [timestamp, signature] = tokenValue.split(".");
   const payload = "jake-dunlap-ceo-cockpit" + timestamp;
-  const hmac = crypto.createHmac("sha256", secret);
-  hmac.update(payload);
-  const expected = hmac.digest("hex");
-
-  if (signature.length !== expected.length) return false;
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, "hex"),
-    Buffer.from(expected, "hex")
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
   );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const expected = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+  return signature === expected;
 }
 
 export default async (req) => {
-  if (req.method !== "GET") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  if (req.method !== "GET") return Response.json({ error: "Method not allowed" }, { status: 405 });
 
   try {
-    // Verify authentication
-    const secret = Netlify.env.get("COCKPIT_SECRET");
-    if (!secret) {
-      return new Response(
-        JSON.stringify({ error: "Server misconfigured" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+    const secret = process.env.COCKPIT_SECRET;
+    if (!secret) return Response.json({ error: "Server misconfigured" }, { status: 500 });
+
+    const cookies = parseCookies(req.headers.get("cookie"));
+    if (!await verifyToken(secret, cookies["cockpit_auth"])) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const cookieHeader = req.headers.get("cookie");
-    const cookies = parseCookies(cookieHeader);
-    const token = cookies["cockpit_auth"];
-
-    if (!verifyToken(secret, token)) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Read from Netlify Blobs
-    const url = new URL(req.url);
-    const key = url.searchParams.get("key");
-
-    if (!key) {
-      return new Response(
-        JSON.stringify({ error: "Missing key parameter" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    const key = new URL(req.url).searchParams.get("key");
+    if (!key) return Response.json({ error: "Missing key" }, { status: 400 });
 
     const store = getStore("cockpit-data");
     const value = await store.get(key);
 
-    if (value === null) {
-      return new Response(
-        JSON.stringify({ key, value: null }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+    if (value === null || value === undefined) {
+      return Response.json({ key, value: null });
     }
 
-    // Try to parse as JSON, fall back to raw string
     let parsed;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      parsed = value;
-    }
-
-    return new Response(
-      JSON.stringify({ key, value: parsed }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    try { parsed = JSON.parse(value); } catch { parsed = value; }
+    return Response.json({ key, value: parsed });
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: "Failed to read store", detail: err.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return Response.json({ error: err.message }, { status: 500 });
   }
 };
+
+export const config = { path: "/.netlify/functions/store-get" };

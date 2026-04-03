@@ -1,5 +1,3 @@
-const crypto = await import("node:crypto");
-
 function parseCookies(cookieHeader) {
   const cookies = {};
   if (!cookieHeader) return cookies;
@@ -10,54 +8,38 @@ function parseCookies(cookieHeader) {
   return cookies;
 }
 
-function verifyToken(secret, tokenValue) {
+async function verifyToken(secret, tokenValue) {
   if (!tokenValue || !tokenValue.includes(".")) return false;
 
   const [timestamp, signature] = tokenValue.split(".");
   const payload = "jake-dunlap-ceo-cockpit" + timestamp;
-  const hmac = crypto.createHmac("sha256", secret);
-  hmac.update(payload);
-  const expected = hmac.digest("hex");
 
-  // Constant-time comparison
-  if (signature.length !== expected.length) return false;
-  return crypto.timingSafeEqual(
-    Buffer.from(signature, "hex"),
-    Buffer.from(expected, "hex")
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
   );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const expected = [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+
+  return signature === expected;
 }
 
 export default async (req) => {
-  if (req.method !== "GET") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   try {
-    const secret = Netlify.env.get("COCKPIT_SECRET");
+    const secret = process.env.COCKPIT_SECRET;
     if (!secret) {
-      return new Response(
-        JSON.stringify({ authenticated: false, error: "Server misconfigured" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return Response.json({ authenticated: false, error: "Server misconfigured" }, { status: 500 });
     }
 
     const cookieHeader = req.headers.get("cookie");
     const cookies = parseCookies(cookieHeader);
     const token = cookies["cockpit_auth"];
 
-    const authenticated = verifyToken(secret, token);
-
-    return new Response(JSON.stringify({ authenticated }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    const authenticated = await verifyToken(secret, token);
+    return Response.json({ authenticated });
   } catch (err) {
-    return new Response(
-      JSON.stringify({ authenticated: false, error: err.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return Response.json({ authenticated: false, error: err.message }, { status: 500 });
   }
 };
+
+export const config = { path: "/.netlify/functions/auth-check" };

@@ -1,44 +1,33 @@
-const crypto = await import("node:crypto");
-
-function signToken(secret, timestamp) {
+async function signToken(secret, timestamp) {
   const payload = "jake-dunlap-ceo-cockpit" + timestamp;
-  const hmac = crypto.createHmac("sha256", secret);
-  hmac.update(payload);
-  return hmac.digest("hex");
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 export default async (req) => {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
 
   try {
     const { password } = await req.json();
-    const expectedPassword = Netlify.env.get("COCKPIT_PASSWORD");
-    const secret = Netlify.env.get("COCKPIT_SECRET");
+    const expectedPassword = process.env.COCKPIT_PASSWORD;
+    const secret = process.env.COCKPIT_SECRET;
 
     if (!expectedPassword || !secret) {
-      return new Response(
-        JSON.stringify({ error: "Server misconfigured" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+      return Response.json({ error: "Server misconfigured" }, { status: 500 });
     }
 
     if (password !== expectedPassword) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid password" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
+      return Response.json({ success: false, error: "Invalid password" }, { status: 401 });
     }
 
     const timestamp = Date.now().toString();
-    const signature = signToken(secret, timestamp);
+    const signature = await signToken(secret, timestamp);
     const tokenValue = `${timestamp}.${signature}`;
-
-    const maxAge = 30 * 24 * 60 * 60; // 30 days in seconds
+    const maxAge = 30 * 24 * 60 * 60;
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
@@ -48,9 +37,8 @@ export default async (req) => {
       },
     });
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: "Login failed", detail: err.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return Response.json({ error: "Login failed: " + err.message }, { status: 500 });
   }
 };
+
+export const config = { path: "/.netlify/functions/auth-login" };
