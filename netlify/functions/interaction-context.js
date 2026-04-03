@@ -136,7 +136,7 @@ export default async (req) => {
           body: JSON.stringify({
             model: "claude-sonnet-4-20250514",
             max_tokens: 512,
-            system: "Summarize the interaction history below in 3-5 bullet points. Focus on: what was discussed, what was promised, where things stand, and what the logical next step is. Be specific — reference actual topics, dates, and commitments. Write from Jake Dunlap's perspective.",
+            system: "Summarize the interaction history below in 3-5 bullet points. Focus on: what was discussed, what was promised, where things stand, and what the logical next step is. Be specific — reference actual topics, dates, and commitments. Write from Jake Dunlap's perspective. Use plain text only — no markdown, no bold, no asterisks, no formatting.",
             messages: [{ role: "user", content: contextParts.join("\n") }],
           }),
         });

@@ -151,7 +151,7 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
             {interactionCtx.summary && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 11, color: "#8B5CF6", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>Where things stand</div>
-                <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{interactionCtx.summary}</div>
+                <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{interactionCtx.summary.replace(/\*\*/g, "").replace(/\*/g, "")}</div>
               </div>
             )}
 
