@@ -553,7 +553,7 @@ export default function App() {
             )}
 
             {/* Sort controls + bulk actions for SFDC Cleanup / Deals at Risk */}
-            {(actionQueue === "sfdcCleanup" || actionQueue === "dealsAtRisk") && currentActions.length > 0 && (
+            {isLive && currentActions.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   {actionQueue === "sfdcCleanup" && (
@@ -571,7 +571,7 @@ export default function App() {
                     <input type="checkbox" style={{ accentColor: "#10B981" }}
                       checked={selectedOpps.size === currentActions.length && currentActions.length > 0}
                       onChange={e => {
-                        if (e.target.checked) setSelectedOpps(new Set(currentActions.map(a => a.id.replace("opp-", ""))));
+                        if (e.target.checked) setSelectedOpps(new Set(currentActions.map(a => a.id)));
                         else setSelectedOpps(new Set());
                       }}
                     /> Select All
@@ -583,28 +583,57 @@ export default function App() {
                     background: "#1E293B", borderRadius: 8, padding: "10px 14px", marginTop: 8,
                     border: "1px solid #334155", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
                   }}>
-                    <button style={s.btn("#EF4444")} disabled={act.sending === "batch"} onClick={async () => {
-                      const batch = [...selectedOpps].map(id => ({
-                        object: "Opportunity", id,
-                        fields: { StageName: "Closed Lost", Lost_Reason__c: "Other", Lost_Reason_Details__c: "Old" },
-                      }));
-                      const results = await act.batchUpdate(batch);
-                      if (results.length) { setSelectedOpps(new Set()); window.location.reload(); }
+                    {/* Mark all selected as done */}
+                    <button style={s.btn("#10B981")} onClick={() => {
+                      selectedOpps.forEach(id => markLiveAction(id, "done"));
+                      setSelectedOpps(new Set());
                     }}>
-                      {act.sending === "batch" ? "Closing..." : `Bulk Close Lost (${selectedOpps.size})`}
+                      Mark Done ({selectedOpps.size})
                     </button>
-                    <button style={s.btn("#8B5CF6")} disabled={act.sending === "batch"} onClick={async () => {
-                      const batch = [...selectedOpps].map(id => {
-                        const action = currentActions.find(a => a.id === `opp-${id}`);
-                        const current = action?.closeDate ? new Date(action.closeDate) : new Date();
-                        const pushed = new Date(current.getTime() + 14 * 86400000);
-                        return { object: "Opportunity", id, fields: { CloseDate: pushed.toISOString().split("T")[0] } };
-                      });
-                      const results = await act.batchUpdate(batch);
-                      if (results.length) { setSelectedOpps(new Set()); window.location.reload(); }
+                    <button style={s.btn("#64748B")} onClick={() => {
+                      selectedOpps.forEach(id => markLiveAction(id, "skipped"));
+                      setSelectedOpps(new Set());
                     }}>
-                      Push Close +2 Weeks
+                      Skip ({selectedOpps.size})
                     </button>
+                    {/* SFDC bulk ops — only show when opp actions are selected */}
+                    {currentActions.some(a => a.id?.startsWith("opp-")) && (
+                      <>
+                        <span style={{ width: 1, height: 20, background: "#334155" }} />
+                        <button style={s.btn("#EF4444")} disabled={act.sending === "batch"} onClick={async () => {
+                          const oppActionIds = [...selectedOpps].filter(id => id.startsWith("opp-"));
+                          if (oppActionIds.length === 0) return;
+                          const batch = oppActionIds.map(id => ({
+                            object: "Opportunity", id: id.replace("opp-", ""),
+                            fields: { StageName: "Closed Lost", Lost_Reason__c: "Other", Lost_Reason_Details__c: "Old" },
+                          }));
+                          const results = await act.batchUpdate(batch);
+                          if (results.length) {
+                            oppActionIds.forEach(id => markLiveAction(id, "done"));
+                            setSelectedOpps(new Set());
+                          }
+                        }}>
+                          {act.sending === "batch" ? "Closing..." : `Close Lost`}
+                        </button>
+                        <button style={s.btn("#8B5CF6")} disabled={act.sending === "batch"} onClick={async () => {
+                          const oppActionIds = [...selectedOpps].filter(id => id.startsWith("opp-"));
+                          if (oppActionIds.length === 0) return;
+                          const batch = oppActionIds.map(id => {
+                            const action = currentActions.find(a => a.id === id);
+                            const current = action?.closeDate ? new Date(action.closeDate) : new Date();
+                            const pushed = new Date(current.getTime() + 14 * 86400000);
+                            return { object: "Opportunity", id: id.replace("opp-", ""), fields: { CloseDate: pushed.toISOString().split("T")[0] } };
+                          });
+                          const results = await act.batchUpdate(batch);
+                          if (results.length) {
+                            oppActionIds.forEach(id => markLiveAction(id, "done"));
+                            setSelectedOpps(new Set());
+                          }
+                        }}>
+                      Push +2 Weeks
+                    </button>
+                      </>
+                    )}
                     <button style={s.btn("#334155")} onClick={() => setSelectedOpps(new Set())}>Clear</button>
                   </div>
                 )}
@@ -656,14 +685,13 @@ export default function App() {
                   onClick={() => setExpandedAction(expanded ? null : action.id)}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    {(actionQueue === "sfdcCleanup" || actionQueue === "dealsAtRisk") && action.id?.startsWith("opp-") && (
+                    {isLive && (
                       <input type="checkbox" style={{ accentColor: "#10B981", marginTop: 4, marginRight: 8 }}
-                        checked={selectedOpps.has(action.id.replace("opp-", ""))}
+                        checked={selectedOpps.has(action.id)}
                         onClick={e => e.stopPropagation()}
                         onChange={e => {
-                          const oppId = action.id.replace("opp-", "");
                           const next = new Set(selectedOpps);
-                          if (e.target.checked) next.add(oppId); else next.delete(oppId);
+                          if (e.target.checked) next.add(action.id); else next.delete(action.id);
                           setSelectedOpps(next);
                         }}
                       />
