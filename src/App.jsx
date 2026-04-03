@@ -109,6 +109,8 @@ export default function App() {
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
   const [editingOpp, setEditingOpp] = useState(null);
   const [oppEdits, setOppEdits] = useState({});
+  // Live metrics
+  const [liveMetrics, setLiveMetrics] = useState(null);
   // New feature panels
   const [showEmailComposer, setShowEmailComposer] = useState(null); // { action, mode: "ai"|"manual" }
   const [showDealInspector, setShowDealInspector] = useState(null); // { oppId, oppName }
@@ -209,6 +211,14 @@ export default function App() {
     fetch("/.netlify/functions/calendar-activities")
       .then(r => r.json())
       .then(data => { if (data.activities?.length) setCalendarActivities(data.activities); })
+      .catch(() => {});
+  }, []);
+
+  // ── Fetch live metrics ──────────────────────────────────────
+  useEffect(() => {
+    fetch("/.netlify/functions/live-metrics")
+      .then(r => r.json())
+      .then(data => { if (!data.error) setLiveMetrics(data); })
       .catch(() => {});
   }, []);
 
@@ -430,49 +440,48 @@ export default function App() {
 
       {/* ── Metrics Bar ───────────────────────────────────────── */}
       <div style={s.metricsBar}>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
-          <div style={s.metricVal}>{REP.activitiesToday}</div>
-          <div style={s.metricLabel}>Activities Today</div>
-          <div style={{ ...s.metricSub, color: REP.activitiesToday >= REP.activitiesGoalDaily ? "#10B981" : "#F59E0B" }}>
-            Goal: {REP.activitiesGoalDaily}
+        <div className="metric-hover" style={s.metricCard} onClick={() => setView("dashboard")}>
+          <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.weightedPipeline) : "..."}</div>
+          <div style={s.metricLabel}>Weighted Forecast</div>
+          <div style={{ ...s.metricSub, color: "#94A3B8" }}>
+            {liveMetrics ? `${liveMetrics.openDeals} deals` : "Loading"}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
-          <div style={s.metricVal}>{doneCount}/{totalActions}</div>
-          <div style={s.metricLabel}>Actions Done</div>
-          <div style={{ ...s.metricSub, color: doneCount === totalActions ? "#10B981" : "#F59E0B" }}>
-            {totalActions - doneCount} remaining
+        <div className="metric-hover" style={s.metricCard} onClick={() => setView("pipeline")}>
+          <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.totalPipeline) : fmt(pipelineTotal)}</div>
+          <div style={s.metricLabel}>Total Pipeline</div>
+          <div style={{ ...s.metricSub, color: "#94A3B8" }}>
+            {liveMetrics ? `${liveMetrics.openDeals} open` : `${displayOpps.length} open`}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("outreach")}>
-          <div style={s.metricVal}>{pct(REP.emailReplyRate)}</div>
-          <div style={s.metricLabel}>Reply Rate</div>
+        <div className="metric-hover" style={s.metricCard} onClick={() => setView("dashboard")}>
+          <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.wonAmountThisQuarter) : "..."}</div>
+          <div style={s.metricLabel}>{liveMetrics?.quarterLabel || "Quarter"} Won</div>
           <div style={{ ...s.metricSub, color: "#10B981" }}>
-            +{(REP.emailReplyRate - REP.industryAvgReply).toFixed(1)}pp vs avg
+            {liveMetrics ? `${liveMetrics.wonThisQuarter} deals closed` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("pipeline")}>
-          <div style={s.metricVal}>{REP.meetingsBooked}</div>
-          <div style={s.metricLabel}>Meetings Booked</div>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("sfdcCleanup"); }}>
+          <div style={{ ...s.metricVal, color: liveMetrics?.pastDueDeals > 0 ? "#EF4444" : "#10B981" }}>
+            {liveMetrics?.pastDueDeals ?? "..."}
+          </div>
+          <div style={s.metricLabel}>Past Due Deals</div>
+          <div style={{ ...s.metricSub, color: "#F59E0B" }}>
+            {liveMetrics ? `${liveMetrics.closingThisWeek} closing this week` : ""}
+          </div>
+        </div>
+        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
+          <div style={s.metricVal}>{liveMetrics?.meetingsToday ?? "..."}</div>
+          <div style={s.metricLabel}>Meetings Today</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            Target: {REP.meetingsTarget}
+            {liveMetrics ? `${liveMetrics.unreadEmails} unread emails` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("pipeline")}>
-          <div style={s.metricVal}>{fmt(REP.pipelineGenerated)}</div>
-          <div style={s.metricLabel}>Pipeline Created</div>
-          <div style={s.metricSub}>
-            <div style={{ background: "#334155", borderRadius: 4, height: 6, marginTop: 4 }}>
-              <div style={{ background: "#10B981", height: 6, borderRadius: 4, width: `${Math.min((REP.pipelineGenerated / REP.quotaPipeline) * 100, 100)}%` }} />
-            </div>
-            <span style={{ color: "#64748B", fontSize: 10 }}>{fmt(REP.quotaPipeline)} target</span>
-          </div>
-        </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => setView("pipeline")}>
-          <div style={s.metricVal}>{fmt(pipelineTotal)}</div>
-          <div style={s.metricLabel}>Active Pipeline</div>
+        <div className="metric-hover" style={s.metricCard} onClick={() => setView("actions")}>
+          <div style={s.metricVal}>{liveMetrics?.newLeadsThisWeek ?? "..."}</div>
+          <div style={s.metricLabel}>New Leads (7d)</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            {displayOpps.length} open opps
+            This week
           </div>
         </div>
       </div>
@@ -1070,12 +1079,14 @@ export default function App() {
                       <strong style={{ color: "#F1F5F9" }}>Next step:</strong>{" "}
                       <span style={{ color: "#CBD5E1" }}>{opp.nextStep}</span>
                     </div>
-                    <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                    <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                       <button style={s.btn("#1E293B")} onClick={() => copyText(`${opp.name}\nAmount: ${fmt(opp.amount)}\nStage: ${opp.stage}\nNext step: ${opp.nextStep}`, "opp details")}>Copy</button>
-                      <button style={s.btn("#1E293B")} onClick={() => emailAction(opp.contact, `Re: ${opp.name}`, `Next step: ${opp.nextStep}`)}>Email</button>
+                      <button style={s.btn("#3B82F6")} onClick={() => setShowEmailComposer({ action: { id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage}`, contact: opp.contact, suggestedAction: `Follow up on ${opp.name}` }, mode: "ai" })}>AI Email</button>
+                      <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: opp.id, oppName: opp.name })}>Inspect</button>
+                      <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `Follow up on ${opp.name}. Next step: ${opp.nextStep}` })}>Delegate</button>
                       {liveOpps && (
                         <button style={s.btn("#F59E0B")} onClick={() => { setEditingOpp(editingOpp === opp.id ? null : opp.id); setOppEdits({}); }}>
-                          {editingOpp === opp.id ? "Close" : "Edit in SFDC"}
+                          {editingOpp === opp.id ? "Close" : "Edit"}
                         </button>
                       )}
                     </div>
@@ -1429,7 +1440,7 @@ export default function App() {
         <EmailComposer
           action={showEmailComposer.action}
           mode={showEmailComposer.mode}
-          onSend={async (data) => {
+          sendEmail={async (data) => {
             const ok = await act.sendEmail(data);
             if (ok) {
               setShowEmailComposer(null);
@@ -1438,6 +1449,7 @@ export default function App() {
             }
             return ok;
           }}
+          onSend={() => setShowEmailComposer(null)}
           onClose={() => setShowEmailComposer(null)}
           setToast={setToast}
         />
