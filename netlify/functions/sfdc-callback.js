@@ -1,4 +1,4 @@
-// Handles OAuth callback — exchanges code for tokens, stores refresh token
+// Handles OAuth callback — exchanges code for tokens with PKCE verifier
 export default async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
@@ -6,6 +6,14 @@ export default async (req) => {
   if (!code) {
     return new Response("Missing authorization code", { status: 400 });
   }
+
+  // Read PKCE verifier from cookie
+  const cookieHeader = req.headers.get("cookie") || "";
+  const pkceMatch = cookieHeader.match(/sfdc_pkce=([^;]+)/);
+  if (!pkceMatch) {
+    return new Response("Missing PKCE verifier — please try connecting again", { status: 400 });
+  }
+  const codeVerifier = pkceMatch[1];
 
   const clientId = process.env.SFDC_CLIENT_ID;
   const clientSecret = process.env.SFDC_CLIENT_SECRET;
@@ -21,6 +29,7 @@ export default async (req) => {
       client_id: clientId,
       client_secret: clientSecret,
       redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
     }),
   });
 
@@ -38,14 +47,17 @@ export default async (req) => {
     instance_url: tokens.instance_url,
   });
 
-  const cookie = `sfdc_tokens=${encodeURIComponent(tokenData)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`;
+  const tokenCookie = `sfdc_tokens=${encodeURIComponent(tokenData)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`;
+  // Clear the PKCE cookie
+  const clearPkce = `sfdc_pkce=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 
   return new Response(null, {
     status: 302,
-    headers: {
-      Location: "/",
-      "Set-Cookie": cookie,
-    },
+    headers: [
+      ["Location", "/"],
+      ["Set-Cookie", tokenCookie],
+      ["Set-Cookie", clearPkce],
+    ],
   });
 };
 
