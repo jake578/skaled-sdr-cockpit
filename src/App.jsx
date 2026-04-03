@@ -898,6 +898,18 @@ export default function App() {
                     <button style={s.btn("#3B82F6")} onClick={() => setBulkAction(bulkAction === "updateStage" ? null : "updateStage")}>
                       Bulk Change Stage
                     </button>
+                    <button style={s.btn("#8B5CF6")} onClick={async () => {
+                      const batch = [...selectedOpps].map(id => {
+                        const opp = filteredOpps.find(o => o.id === id);
+                        const current = opp?.closeDate && opp.closeDate !== "—" ? new Date(opp.closeDate) : new Date();
+                        const pushed = new Date(current.getTime() + 14 * 86400000);
+                        return { object: "Opportunity", id, fields: { CloseDate: pushed.toISOString().split("T")[0] } };
+                      });
+                      const results = await act.batchUpdate(batch);
+                      if (results.length) { setSelectedOpps(new Set()); setBulkAction(null); window.location.reload(); }
+                    }}>
+                      Push Close +2 Weeks
+                    </button>
                     <button style={s.btn("#334155")} onClick={() => { setSelectedOpps(new Set()); setBulkAction(null); }}>Clear</button>
                   </div>
                 )}
