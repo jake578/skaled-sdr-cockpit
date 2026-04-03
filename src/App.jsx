@@ -96,34 +96,43 @@ export default function App() {
     if (!sfdc.connected) return;
     setSfdcLoading(true);
     Promise.all([
-      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, NextStep, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY Amount DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Subject, ActivityDate, Status, WhoId, Who.Name, What.Name, AccountId, Account.Name, Type FROM Task WHERE ActivityDate >= LAST_N_DAYS:30 ORDER BY ActivityDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type, LastActivityDate, (SELECT Id FROM Contacts) FROM Account WHERE LastActivityDate >= LAST_N_DAYS:90 ORDER BY LastActivityDate DESC LIMIT 30`),
-      sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, LastActivityDate FROM Lead WHERE IsConverted = false ORDER BY LastActivityDate DESC LIMIT 30`),
+      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Subject, CreatedDate, Status, Who.Name, What.Name, Type FROM Task ORDER BY CreatedDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
     ]).then(([opps, activities, accounts, leads]) => {
-      if (opps) setLiveOpps(opps.map(o => ({
+      if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
-        contact: "—", amount: o.Amount || 0, stage: o.StageName,
+        contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
         probability: o.Probability || 0, closeDate: o.CloseDate || "—",
-        lastActivity: o.LastActivityDate || "—", nextStep: o.NextStep || "—",
-        daysInStage: Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000),
+        lastActivity: o.LastActivityDate || "—", nextStep: "—",
+        daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
         source: o.LeadSource || "—",
       })));
-      if (activities) setLiveActivities(activities.map(a => ({
-        date: a.ActivityDate || "—", type: (a.Type || "task").toLowerCase(),
-        subject: a.Subject || "—", contact: a.Who?.Name || "—",
-        company: a.Account?.Name || a.What?.Name || "—",
-        direction: a.Status === "Completed" ? "outbound" : "inbound",
-      })));
-      if (accounts) setLiveAccounts(accounts.map(a => ({
+      if (activities && activities.length) setLiveActivities(activities.map(a => {
+        // Parse type from subject line: [Outreach] [Email] [Out] → email/outbound
+        const subj = a.Subject || "";
+        const isEmail = subj.includes("[Email]");
+        const isCall = subj.includes("[Call]") || (a.Type || "").toLowerCase().includes("call");
+        const isOutbound = subj.includes("[Out]");
+        const dateStr = a.CreatedDate ? a.CreatedDate.split("T")[0] : "—";
+        return {
+          date: dateStr, type: isCall ? "call" : isEmail ? "email" : (a.Type || "task").toLowerCase(),
+          subject: subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim() || subj,
+          contact: a.Who?.Name || "—",
+          company: a.What?.Name || "—",
+          direction: isOutbound ? "outbound" : "inbound",
+        };
+      }));
+      if (accounts && accounts.length) setLiveAccounts(accounts.map(a => ({
         name: a.Name, industry: a.Industry || "—", employees: a.NumberOfEmployees || 0,
-        status: a.Type || "—", contacts: a.Contacts?.length || 0,
-        lastTouch: a.LastActivityDate || "—",
+        status: a.Type || "—", contacts: 0,
+        lastTouch: "—",
       })));
-      if (leads) setLiveLeads(leads.map(l => ({
+      if (leads && leads.length) setLiveLeads(leads.map(l => ({
         name: l.Name, company: l.Company || "—", title: l.Title || "—",
         status: l.Status || "—", source: l.LeadSource || "—",
-        score: 0, lastTouch: l.LastActivityDate || "—",
+        score: 0, lastTouch: l.CreatedDate ? l.CreatedDate.split("T")[0] : "—",
       })));
       setSfdcLoading(false);
     });
