@@ -6,6 +6,13 @@ import {
 } from "./mockData";
 import { useSalesforce } from "./useSalesforce";
 import { useActions } from "./useActions";
+import EmailComposer from "./components/EmailComposer";
+import DealInspector from "./components/DealInspector";
+import DailyBrief from "./components/DailyBrief";
+import EADelegate from "./components/EADelegate";
+import WeeklyDigest from "./components/WeeklyDigest";
+import ClientHealth from "./components/ClientHealth";
+import RevenueForecast from "./components/RevenueForecast";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -102,6 +109,12 @@ export default function App() {
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
   const [editingOpp, setEditingOpp] = useState(null);
   const [oppEdits, setOppEdits] = useState({});
+  // New feature panels
+  const [showEmailComposer, setShowEmailComposer] = useState(null); // { action, mode: "ai"|"manual" }
+  const [showDealInspector, setShowDealInspector] = useState(null); // { oppId, oppName }
+  const [showDailyBrief, setShowDailyBrief] = useState(false);
+  const [showEADelegate, setShowEADelegate] = useState(null); // action object
+  const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
 
   // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -255,7 +268,7 @@ export default function App() {
     const handler = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.key === "1") setView("actions");
-      if (e.key === "2") setView("outreach");
+      if (e.key === "2") setView("dashboard");
       if (e.key === "3") setView("pipeline");
       if (e.key === "/" && !e.metaKey) { e.preventDefault(); document.getElementById("search-input")?.focus(); }
       if (e.key === "c" || e.key === "C") setChatOpen(prev => !prev);
@@ -367,12 +380,12 @@ export default function App() {
         <div style={s.logo}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #10B981, #059669)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, color: "#fff" }}>S</div>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#F1F5F9" }}>Skaled SDR Cockpit</div>
-            <div style={{ fontSize: 11, color: "#64748B" }}>Jake Dunlap — CEO · {REP.quarter}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#F1F5F9" }}>CEO Cockpit</div>
+            <div style={{ fontSize: 11, color: "#64748B" }}>Jake Dunlap — Skaled Consulting</div>
           </div>
         </div>
         <div style={s.nav}>
-          {[["actions", "Daily Actions"], ["outreach", "Outreach"], ["pipeline", "Pipeline"]].map(([key, label]) => (
+          {[["actions", "Actions"], ["dashboard", "Dashboard"], ["pipeline", "Pipeline"]].map(([key, label]) => (
             <button key={key} style={s.navBtn(view === key)} onClick={() => setView(key)}>{label}</button>
           ))}
         </div>
@@ -403,6 +416,8 @@ export default function App() {
             </button>
           )}
           {liveOpps && <span style={{ fontSize: 10, color: "#64748B", background: "#1E293B", padding: "2px 6px", borderRadius: 3 }}>LIVE</span>}
+          <button style={{ ...s.btn("#8B5CF6"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowDailyBrief(true)}>AI Brief</button>
+          <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowWeeklyDigest(true)}>Weekly</button>
         </div>
       </div>
 
@@ -679,59 +694,24 @@ export default function App() {
                           <button style={s.btn("#334155")} onClick={() => isLive ? markLiveAction(action.id, "pending") : markAction(action.id, "pending")}>Reopen</button>
                         )}
                         <button style={s.btn("#3B82F6")} onClick={() => {
-                          setComposing(composing === action.id ? null : action.id);
-                          setComposeData({ to: action.contact || "", subject: `Re: ${action.subtitle || action.title}`, body: "" });
-                        }}>
-                          {composing === action.id ? "Close Email" : "Send Email"}
-                        </button>
+                          setShowEmailComposer({ action, mode: "manual" });
+                        }}>Email</button>
+                        <button style={s.btn("#8B5CF6")} onClick={() => {
+                          setShowEmailComposer({ action, mode: "ai" });
+                        }}>AI Email</button>
+                        <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate(action)}>Delegate</button>
                         {action.id?.startsWith("opp-") && (
-                          <button style={s.btn("#F59E0B")} onClick={() => setEditingOpp(editingOpp === action.id ? null : action.id)}>
-                            {editingOpp === action.id ? "Close Edit" : "Update Opp"}
-                          </button>
+                          <>
+                            <button style={s.btn("#F59E0B")} onClick={() => setEditingOpp(editingOpp === action.id ? null : action.id)}>
+                              {editingOpp === action.id ? "Close Edit" : "Update Opp"}
+                            </button>
+                            <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: action.id.replace("opp-", ""), oppName: action.title })}>
+                              Inspect
+                            </button>
+                          </>
                         )}
                         <button style={s.btn("#1E293B")} onClick={() => copyText(action.suggestedAction, "suggested action")}>Copy</button>
                       </div>
-
-                      {/* Inline email compose */}
-                      {composing === action.id && (
-                        <div style={{ background: "#0F172A", borderRadius: 8, padding: 14, marginBottom: 10, border: "1px solid #334155" }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: "#F1F5F9", marginBottom: 8 }}>Compose Email</div>
-                          <input
-                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 6 }}
-                            placeholder="To (email address)"
-                            value={composeData.to}
-                            onChange={e => setComposeData(d => ({ ...d, to: e.target.value }))}
-                          />
-                          <input
-                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 6 }}
-                            placeholder="Subject"
-                            value={composeData.subject}
-                            onChange={e => setComposeData(d => ({ ...d, subject: e.target.value }))}
-                          />
-                          <textarea
-                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, minHeight: 100, resize: "vertical", marginBottom: 8 }}
-                            placeholder="Message body..."
-                            value={composeData.body}
-                            onChange={e => setComposeData(d => ({ ...d, body: e.target.value }))}
-                          />
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button
-                              style={{ ...s.btn("#10B981"), opacity: act.sending === "email" ? 0.6 : 1 }}
-                              disabled={act.sending === "email"}
-                              onClick={async () => {
-                                const ok = await act.sendEmail(composeData);
-                                if (ok) {
-                                  setComposing(null);
-                                  if (isLive) markLiveAction(action.id, "done");
-                                }
-                              }}
-                            >
-                              {act.sending === "email" ? "Sending..." : "Send"}
-                            </button>
-                            <button style={s.btn("#334155")} onClick={() => setComposing(null)}>Cancel</button>
-                          </div>
-                        </div>
-                      )}
 
                       {/* Inline SFDC opp edit */}
                       {editingOpp === action.id && action.id?.startsWith("opp-") && (
@@ -832,89 +812,21 @@ export default function App() {
           );
         })()}
 
-        {/* ── OUTREACH VIEW ─────────────────────────────────── */}
-        {view === "outreach" && (
+        {/* ── DASHBOARD VIEW ─────────────────────────────────── */}
+        {view === "dashboard" && (
           <div>
-            {/* Activity Trend */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-              <div style={{ ...s.card, cursor: "default" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9", marginBottom: 12 }}>This Week's Activity</div>
-                <MiniBar data={WEEKLY_ACTIVITY} maxH={90} barW={36} />
-                <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 11 }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#3B82F6" }} /> Email</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#8B5CF6" }} /> Calls</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#06B6D4" }} /> LinkedIn</span>
-                </div>
-              </div>
-              <div style={{ ...s.card, cursor: "default" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9", marginBottom: 12 }}>Pipeline Trajectory</div>
-                <MiniLine data={PIPELINE_WEEKLY} w={280} h={80} />
-                <div style={{ fontSize: 11, color: "#64748B", marginTop: 8 }}>
-                  {PIPELINE_WEEKLY.map(p => p.week).join(" → ")}
-                </div>
-              </div>
-            </div>
-
-            {/* Sequences */}
-            <div style={{ ...s.sectionTitle, marginBottom: 12 }}>Outreach Sequences</div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Sequence</th>
-                    <th style={s.th}>Status</th>
-                    <th style={s.th}>Active</th>
-                    <th style={s.th}>Total</th>
-                    <th style={s.th}>Open Rate</th>
-                    <th style={s.th}>Reply Rate</th>
-                    <th style={s.th}>Meetings</th>
-                    <th style={s.th}>Avg Days to Reply</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {SEQUENCES.map((seq, i) => (
-                    <tr key={i} className="row-hover" style={{ cursor: "pointer" }}>
-                      <td style={{ ...s.td, color: "#F1F5F9", fontWeight: 600 }}>{seq.name}</td>
-                      <td style={s.td}>
-                        <span style={s.badge(seq.status === "active" ? "#10B981" : "#F59E0B")}>{seq.status}</span>
-                      </td>
-                      <td style={s.td}>{seq.activeProspects}</td>
-                      <td style={s.td}>{seq.totalEnrolled}</td>
-                      <td style={s.td}>{pct(seq.openRate)}</td>
-                      <td style={{ ...s.td, color: seq.replyRate >= 15 ? "#10B981" : seq.replyRate >= 10 ? "#F59E0B" : "#EF4444", fontWeight: 600 }}>
-                        {pct(seq.replyRate)}
-                      </td>
-                      <td style={{ ...s.td, fontWeight: 600, color: "#F1F5F9" }}>{seq.meetingsBooked}</td>
-                      <td style={s.td}>{seq.avgDaysToReply}d</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Top Touchpoints */}
-            <div style={{ ...s.sectionTitle, marginTop: 24, marginBottom: 12 }}>Top Performing Touchpoints</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              {TOP_TOUCHPOINTS.map((tp, i) => (
-                <div key={i} className="card-hover" style={{ ...s.card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                      <span style={s.badge(tp.type === "email" ? "#3B82F6" : tp.type === "call" ? "#8B5CF6" : "#06B6D4")}>{tp.type}</span>
-                      <span style={{ fontSize: 11, color: "#64748B" }}>#{i + 1}</span>
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#F1F5F9" }}>{tp.name}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: "#10B981" }}>
-                      {tp.replyRate ? pct(tp.replyRate) : pct(tp.connectRate)}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#64748B" }}>
-                      {tp.meetings} meetings · {tp.replies || tp.conversations} {tp.replies ? "replies" : "convos"}
-                    </div>
-                  </div>
-                </div>
+            <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+              {[["forecast", "Revenue Forecast"], ["clients", "Client Health"]].map(([key, label]) => (
+                <button key={key} style={{
+                  padding: "6px 14px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
+                  fontSize: 12, fontWeight: 600,
+                  background: (pipelineTab === key || (!["forecast", "clients"].includes(pipelineTab) && key === "forecast")) ? "#10B981" : "transparent",
+                  color: (pipelineTab === key || (!["forecast", "clients"].includes(pipelineTab) && key === "forecast")) ? "#fff" : "#94A3B8",
+                }} onClick={() => setPipelineTab(key)}>{label}</button>
               ))}
             </div>
+            {(pipelineTab === "forecast" || !["forecast", "clients"].includes(pipelineTab)) && <RevenueForecast />}
+            {pipelineTab === "clients" && <ClientHealth />}
           </div>
         )}
 
@@ -1370,8 +1282,8 @@ export default function App() {
         padding: "12px 24px", borderTop: "1px solid #1E293B", textAlign: "center",
         fontSize: 11, color: "#475569",
       }}>
-        Keyboard: <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>1</kbd> Actions{" "}
-        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>2</kbd> Outreach{" "}
+        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>1</kbd> Actions{" "}
+        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>2</kbd> Dashboard{" "}
         <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>3</kbd> Pipeline{" "}
         <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>/</kbd> Search{" "}
         <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>C</kbd> Claude
@@ -1510,6 +1422,50 @@ export default function App() {
           }}
           onClick={() => setChatOpen(true)}
         >C</button>
+      )}
+
+      {/* ── Feature Modals/Panels ─────────────────────────────── */}
+      {showEmailComposer && (
+        <EmailComposer
+          action={showEmailComposer.action}
+          mode={showEmailComposer.mode}
+          onSend={async (data) => {
+            const ok = await act.sendEmail(data);
+            if (ok) {
+              setShowEmailComposer(null);
+              const actionId = showEmailComposer.action?.id;
+              if (actionId) markLiveAction(actionId, "done");
+            }
+            return ok;
+          }}
+          onClose={() => setShowEmailComposer(null)}
+          setToast={setToast}
+        />
+      )}
+
+      {showDealInspector && (
+        <DealInspector
+          oppId={showDealInspector.oppId}
+          oppName={showDealInspector.oppName}
+          onClose={() => setShowDealInspector(null)}
+        />
+      )}
+
+      {showDailyBrief && (
+        <DailyBrief onClose={() => setShowDailyBrief(false)} />
+      )}
+
+      {showEADelegate && (
+        <EADelegate
+          action={showEADelegate}
+          onClose={() => setShowEADelegate(null)}
+          onDelegated={(id) => markLiveAction(id, "done")}
+          setToast={setToast}
+        />
+      )}
+
+      {showWeeklyDigest && (
+        <WeeklyDigest onClose={() => setShowWeeklyDigest(false)} />
       )}
     </div>
   );
