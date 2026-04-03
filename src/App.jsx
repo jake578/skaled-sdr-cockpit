@@ -477,6 +477,9 @@ export default function App() {
           if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
             currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
           }
+          if (actionQueue === "dealsAtRisk" && oppEdits.riskFilter) {
+            currentActions = currentActions.filter(a => a.priority === oppEdits.riskFilter);
+          }
           const isLive = !!liveActions;
           const countFor = (key) => (queueMap[key] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
 
@@ -535,6 +538,14 @@ export default function App() {
                       <span style={{ fontSize: 12, color: "#64748B", marginLeft: 4 }}>
                         {currentActions.filter(a => a.tag === "past-due").length} past due · {currentActions.filter(a => a.tag === "closing-soon").length} closing this week
                       </span>
+                    </>
+                  )}
+                  {actionQueue === "dealsAtRisk" && (
+                    <>
+                      <span style={{ fontSize: 12, color: "#64748B" }}>Filter:</span>
+                      <button style={s.btn(!oppEdits.riskFilter ? "#EF4444" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: null }))}>All ({currentActions.length})</button>
+                      <button style={s.btn(oppEdits.riskFilter === "critical" ? "#EF4444" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: "critical" }))}>Critical ({currentActions.filter(a => a.priority === "critical").length})</button>
+                      <button style={s.btn(oppEdits.riskFilter === "high" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, riskFilter: "high" }))}>High ({currentActions.filter(a => a.priority === "high").length})</button>
                     </>
                   )}
                   <span style={{ flex: 1 }} />
