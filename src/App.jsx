@@ -96,6 +96,7 @@ export default function App() {
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
   const [selectedOpps, setSelectedOpps] = useState(new Set());
+  const [oppSortAsc, setOppSortAsc] = useState(true);
   const [bulkAction, setBulkAction] = useState(null);
   const [composing, setComposing] = useState(null); // action id being composed
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
@@ -868,6 +869,9 @@ export default function App() {
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                   <div style={s.sectionTitle}>Open Opportunities — {fmt(pipelineTotal)} total pipeline</div>
+                  <button style={s.btn("#334155")} onClick={() => setOppSortAsc(p => !p)}>
+                    {oppSortAsc ? "Closest first ↑" : "Furthest first ↓"}
+                  </button>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94A3B8", cursor: "pointer" }}>
                       <input type="checkbox" style={{ accentColor: "#10B981" }}
@@ -1032,7 +1036,11 @@ export default function App() {
                   </div>
                 )}
 
-                {filteredOpps.map(opp => (
+                {[...filteredOpps].sort((a, b) => {
+                  const da = a.closeDate && a.closeDate !== "—" ? new Date(a.closeDate) : new Date("2099-01-01");
+                  const db = b.closeDate && b.closeDate !== "—" ? new Date(b.closeDate) : new Date("2099-01-01");
+                  return oppSortAsc ? da - db : db - da;
+                }).map(opp => (
                   <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: selectedOpps.has(opp.id) ? "3px solid #10B981" : undefined }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
