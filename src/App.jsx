@@ -266,11 +266,11 @@ export default function App() {
   const displayAccounts = liveAccounts || ACCOUNTS;
   const displayLeads = liveLeads || LEADS;
 
-  // Persist action statuses
+  // Persist mock action statuses (merged, not overwriting)
   useEffect(() => {
     const statuses = {};
     actions.forEach(a => { statuses[a.id] = a.status; });
-    save({ actions: statuses });
+    save({ ...load(), actions: statuses });
   }, [actions]);
 
   // Keyboard shortcuts
