@@ -1512,7 +1512,7 @@ export default function App() {
         <EADelegate
           action={showEADelegate}
           onClose={() => setShowEADelegate(null)}
-          onDelegated={(id) => markLiveAction(id, "done")}
+          onDelegated={(action) => markLiveAction(action?.id || action, "done")}
           setToast={setToast}
         />
       )}
