@@ -964,23 +964,50 @@ export default function App() {
             {/* Opportunities */}
             {pipelineTab === "opps" && (
               <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <div style={s.sectionTitle}>Open Opportunities — {fmt(pipelineTotal)} total pipeline</div>
                   <button style={s.btn("#334155")} onClick={() => setOppSortAsc(p => !p)}>
                     {oppSortAsc ? "Closest first ↑" : "Furthest first ↓"}
                   </button>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94A3B8", cursor: "pointer" }}>
-                      <input type="checkbox" style={{ accentColor: "#10B981" }}
-                        checked={selectedOpps.size === filteredOpps.length && filteredOpps.length > 0}
-                        onChange={e => {
-                          if (e.target.checked) setSelectedOpps(new Set(filteredOpps.map(o => o.id)));
-                          else setSelectedOpps(new Set());
-                        }}
-                      /> Select All
-                    </label>
-                    {selectedOpps.size > 0 && <span style={{ fontSize: 12, color: "#F1F5F9", fontWeight: 600 }}>{selectedOpps.size} selected</span>}
-                  </div>
+                </div>
+                {/* Forecast category filter */}
+                <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
+                  {[
+                    { key: "all", label: "All", color: "#10B981" },
+                    { key: "Commit", label: "Commit", color: "#3B82F6" },
+                    { key: "Best Case", label: "Best Case", color: "#F59E0B" },
+                    { key: "Pipeline", label: "Pipeline", color: "#8B5CF6" },
+                    { key: "Omitted", label: "Omitted", color: "#64748B" },
+                    { key: "none", label: "No Category", color: "#64748B" },
+                  ].map(f => {
+                    const count = filteredOpps.filter(o =>
+                      f.key === "all" ? true :
+                      f.key === "none" ? (!o.forecastCategory || o.forecastCategory === "—") :
+                      o.forecastCategory === f.key
+                    ).length;
+                    if (count === 0 && f.key !== "all") return null;
+                    return (
+                      <button key={f.key} style={{
+                        padding: "5px 12px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
+                        fontSize: 11, fontWeight: 600,
+                        background: (oppEdits.forecastFilter || "all") === f.key ? f.color : "transparent",
+                        color: (oppEdits.forecastFilter || "all") === f.key ? "#fff" : "#94A3B8",
+                      }} onClick={() => setOppEdits(d => ({ ...d, forecastFilter: f.key }))}>
+                        {f.label} ({count})
+                      </button>
+                    );
+                  })}
+                  <span style={{ flex: 1 }} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94A3B8", cursor: "pointer" }}>
+                    <input type="checkbox" style={{ accentColor: "#10B981" }}
+                      checked={selectedOpps.size === filteredOpps.length && filteredOpps.length > 0}
+                      onChange={e => {
+                        if (e.target.checked) setSelectedOpps(new Set(filteredOpps.map(o => o.id)));
+                        else setSelectedOpps(new Set());
+                      }}
+                    /> Select All
+                  </label>
+                  {selectedOpps.size > 0 && <span style={{ fontSize: 12, color: "#F1F5F9", fontWeight: 600 }}>{selectedOpps.size} selected</span>}
                 </div>
 
                 {/* Bulk action bar */}
@@ -1133,11 +1160,24 @@ export default function App() {
                   </div>
                 )}
 
-                {[...filteredOpps].sort((a, b) => {
-                  const da = a.closeDate && a.closeDate !== "—" ? new Date(a.closeDate) : new Date("2099-01-01");
-                  const db = b.closeDate && b.closeDate !== "—" ? new Date(b.closeDate) : new Date("2099-01-01");
-                  return oppSortAsc ? da - db : db - da;
-                }).map(opp => (
+                {[...filteredOpps]
+                  .filter(o => {
+                    const f = oppEdits.forecastFilter || "all";
+                    if (f === "all") return true;
+                    if (f === "none") return !o.forecastCategory || o.forecastCategory === "—";
+                    return o.forecastCategory === f;
+                  })
+                  .sort((a, b) => {
+                    // Primary: forecast category (Commit > Best Case > Pipeline > Omitted > none)
+                    const catOrder = { "Commit": 0, "Best Case": 1, "Closed": 2, "Pipeline": 3, "Omitted": 4 };
+                    const ca = catOrder[a.forecastCategory] ?? 5;
+                    const cb = catOrder[b.forecastCategory] ?? 5;
+                    if (ca !== cb) return ca - cb;
+                    // Secondary: close date
+                    const da = a.closeDate && a.closeDate !== "—" ? new Date(a.closeDate) : new Date("2099-01-01");
+                    const db = b.closeDate && b.closeDate !== "—" ? new Date(b.closeDate) : new Date("2099-01-01");
+                    return oppSortAsc ? da - db : db - da;
+                  }).map(opp => (
                   <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: selectedOpps.has(opp.id) ? "3px solid #10B981" : undefined }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
