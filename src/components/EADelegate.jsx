@@ -95,11 +95,13 @@ export default function EADelegate({ action, onClose, onDelegated }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           actionTitle: action?.title || "",
-          actionDetails: action?.suggestedAction || action?.subtitle || "",
+          actionDetails: [
+            action?.subtitle || "",
+            action?.suggestedAction || "",
+            notes ? `\nNotes from Jake:\n${notes}` : "",
+          ].filter(Boolean).join("\n\n"),
           priority,
           dueDate,
-          notes,
-          actionId: action?.id,
           eaEmail: targetEmail,
         }),
       });
