@@ -84,6 +84,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [pipelineTab, setPipelineTab] = useState("opps"); // opps | activities | accounts | leads
   const [copiedId, setCopiedId] = useState(null);
+  const [activityFilter, setActivityFilter] = useState("all");
 
   // ── Live SFDC Data ───────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -97,10 +98,11 @@ export default function App() {
     setSfdcLoading(true);
     Promise.all([
       sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Subject, CreatedDate, Status, Who.Name, What.Name, Type FROM Task ORDER BY CreatedDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Subject, CreatedDate, Status, Who.Name, What.Name, Type FROM Task ORDER BY CreatedDate DESC LIMIT 100`),
+      sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY CreatedDate DESC LIMIT 100`),
       sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
       sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
-    ]).then(([opps, activities, accounts, leads]) => {
+    ]).then(([opps, tasks, events, accounts, leads]) => {
       if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
         contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
@@ -109,21 +111,85 @@ export default function App() {
         daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
         source: o.LeadSource || "—",
       })));
-      if (activities && activities.length) setLiveActivities(activities.map(a => {
-        // Parse type from subject line: [Outreach] [Email] [Out] → email/outbound
+
+      // Merge Tasks + Events into unified activity feed
+      const allActivities = [];
+
+      if (tasks && tasks.length) tasks.forEach(a => {
         const subj = a.Subject || "";
-        const isEmail = subj.includes("[Email]");
-        const isCall = subj.includes("[Call]") || (a.Type || "").toLowerCase().includes("call");
-        const isOutbound = subj.includes("[Out]");
         const dateStr = a.CreatedDate ? a.CreatedDate.split("T")[0] : "—";
-        return {
-          date: dateStr, type: isCall ? "call" : isEmail ? "email" : (a.Type || "task").toLowerCase(),
-          subject: subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim() || subj,
-          contact: a.Who?.Name || "—",
-          company: a.What?.Name || "—",
-          direction: isOutbound ? "outbound" : "inbound",
-        };
-      }));
+        const timeStr = a.CreatedDate ? new Date(a.CreatedDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+
+        // Categorize by subject pattern
+        let type = "task";
+        let direction = "outbound";
+        let cleanSubject = subj;
+
+        if (subj.startsWith("Sent ")) {
+          type = "email";
+          direction = "outbound";
+          cleanSubject = subj.replace(/^Sent /, "");
+        } else if (subj.includes("[Email]") && subj.includes("[Out]")) {
+          type = "email";
+          direction = "outbound";
+          cleanSubject = subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim();
+        } else if (subj.includes("[Email]") && subj.includes("[In]")) {
+          type = "email";
+          direction = "inbound";
+          cleanSubject = subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim();
+        } else if (subj.startsWith("Submitted Form")) {
+          type = "form";
+          direction = "inbound";
+          cleanSubject = "Form submission";
+        } else if ((a.Type || "").toLowerCase() === "call") {
+          type = "call";
+        } else if ((a.Type || "").toLowerCase() === "meeting") {
+          type = "meeting";
+        } else if ((a.Type || "").toLowerCase() === "email") {
+          type = "email";
+        }
+
+        allActivities.push({
+          date: dateStr, time: timeStr, type, direction,
+          subject: cleanSubject, contact: a.Who?.Name || "—",
+          company: a.What?.Name || "—", source: "Outreach",
+          sortDate: a.CreatedDate || "",
+        });
+      });
+
+      if (events && events.length) events.forEach(e => {
+        const subj = e.Subject || "";
+        const dateStr = e.StartDateTime ? e.StartDateTime.split("T")[0] : e.CreatedDate ? e.CreatedDate.split("T")[0] : "—";
+        const timeStr = e.StartDateTime ? new Date(e.StartDateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+
+        let type = "meeting";
+        let cleanSubject = subj;
+        let source = "SFDC";
+
+        if (subj.startsWith("Chorus - ")) {
+          type = "call";
+          cleanSubject = subj.replace("Chorus - ", "");
+          source = "Chorus";
+        } else if (subj.includes("Book a Meeting") || subj.includes("Calendly")) {
+          type = "meeting";
+          // Extract name from "Name: Book a Meeting..." pattern
+          const namePart = subj.split(":")[0];
+          cleanSubject = namePart ? `Meeting booked — ${namePart}` : subj;
+          source = "Calendly";
+        }
+
+        allActivities.push({
+          date: dateStr, time: timeStr, type, direction: "outbound",
+          subject: cleanSubject, contact: e.Who?.Name || "—",
+          company: e.What?.Name || "—", source,
+          sortDate: e.StartDateTime || e.CreatedDate || "",
+        });
+      });
+
+      // Sort by date descending
+      allActivities.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || ""));
+      if (allActivities.length) setLiveActivities(allActivities);
+
       if (accounts && accounts.length) setLiveAccounts(accounts.map(a => ({
         name: a.Name, industry: a.Industry || "—", employees: a.NumberOfEmployees || 0,
         status: a.Type || "—", contacts: 0,
@@ -600,7 +666,21 @@ export default function App() {
             {/* Activities */}
             {pipelineTab === "activities" && (
               <div>
-                <div style={s.sectionTitle}>Recent Salesforce Activities</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={s.sectionTitle}>Activity Feed — Emails, Calls, Meetings, Forms</div>
+                  {liveActivities && (
+                    <div style={{ display: "flex", gap: 8, fontSize: 11 }}>
+                      {["all", "email", "call", "meeting", "form"].map(f => (
+                        <button key={f} style={{
+                          padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer",
+                          fontSize: 11, fontWeight: 600, textTransform: "capitalize",
+                          background: (activityFilter || "all") === f ? "#10B981" : "transparent",
+                          color: (activityFilter || "all") === f ? "#fff" : "#94A3B8",
+                        }} onClick={() => setActivityFilter(f)}>{f}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <table style={s.table}>
                   <thead>
                     <tr>
@@ -609,22 +689,38 @@ export default function App() {
                       <th style={s.th}>Subject</th>
                       <th style={s.th}>Contact</th>
                       <th style={s.th}>Company</th>
+                      <th style={s.th}>Source</th>
                       <th style={s.th}>Dir</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {displayActivities.map((act, i) => (
-                      <tr key={i} className="row-hover">
-                        <td style={{ ...s.td, whiteSpace: "nowrap" }}>{act.date}</td>
-                        <td style={s.td}>{ACTIVITY_ICONS[act.type] || "▸"} {act.type}</td>
-                        <td style={{ ...s.td, color: "#F1F5F9" }}>{act.subject}</td>
-                        <td style={s.td}>{act.contact}</td>
-                        <td style={s.td}>{act.company}</td>
-                        <td style={s.td}>
-                          <span style={s.badge(act.direction === "inbound" ? "#10B981" : "#3B82F6")}>{act.direction}</span>
-                        </td>
-                      </tr>
-                    ))}
+                    {displayActivities
+                      .filter(act => !activityFilter || activityFilter === "all" || act.type === activityFilter)
+                      .map((act, i) => {
+                      const typeColors = { email: "#3B82F6", call: "#8B5CF6", meeting: "#F59E0B", form: "#10B981", task: "#64748B" };
+                      return (
+                        <tr key={i} className="row-hover">
+                          <td style={{ ...s.td, whiteSpace: "nowrap" }}>
+                            <div>{act.date}</div>
+                            {act.time && <div style={{ fontSize: 10, color: "#64748B" }}>{act.time}</div>}
+                          </td>
+                          <td style={s.td}>
+                            <span style={s.badge(typeColors[act.type] || "#64748B")}>
+                              {ACTIVITY_ICONS[act.type] || (act.type === "form" ? "📝" : "▸")} {act.type}
+                            </span>
+                          </td>
+                          <td style={{ ...s.td, color: "#F1F5F9", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{act.subject}</td>
+                          <td style={s.td}>{act.contact}</td>
+                          <td style={s.td}>{act.company}</td>
+                          <td style={s.td}>
+                            <span style={{ fontSize: 10, color: "#64748B" }}>{act.source || "SFDC"}</span>
+                          </td>
+                          <td style={s.td}>
+                            <span style={s.badge(act.direction === "inbound" ? "#10B981" : "#3B82F6")}>{act.direction}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
