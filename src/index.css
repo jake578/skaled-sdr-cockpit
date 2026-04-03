@@ -11,3 +11,11 @@ body {
 ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #475569; }
 input, textarea, select { font-family: inherit; outline: none; }
+input[type="date"] { cursor: pointer; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+  padding: 4px;
+}
+input[type="date"]::-webkit-datetime-edit { color: #E2E8F0; }
+input[type="date"]::-webkit-datetime-edit-fields-wrapper { color: #E2E8F0; }
