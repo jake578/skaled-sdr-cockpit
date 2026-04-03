@@ -98,11 +98,10 @@ export default function App() {
     setSfdcLoading(true);
     Promise.all([
       sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Subject, CreatedDate, Status, Who.Name, What.Name, Type FROM Task ORDER BY CreatedDate DESC LIMIT 100`),
-      sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY CreatedDate DESC LIMIT 100`),
+      sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
       sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
       sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
-    ]).then(([opps, tasks, events, accounts, leads]) => {
+    ]).then(([opps, events, accounts, leads]) => {
       if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
         contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
@@ -112,50 +111,8 @@ export default function App() {
         source: o.LeadSource || "—",
       })));
 
-      // Merge Tasks + Events into unified activity feed
+      // Only use Events (Chorus calls + Calendly meetings) — Task dates are unreliable (SFDC sync date, not actual activity date)
       const allActivities = [];
-
-      if (tasks && tasks.length) tasks.forEach(a => {
-        const subj = a.Subject || "";
-        const dateStr = a.CreatedDate ? a.CreatedDate.split("T")[0] : "—";
-        const timeStr = a.CreatedDate ? new Date(a.CreatedDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-
-        // Categorize by subject pattern
-        let type = "task";
-        let direction = "outbound";
-        let cleanSubject = subj;
-
-        if (subj.startsWith("Sent ")) {
-          type = "email";
-          direction = "outbound";
-          cleanSubject = subj.replace(/^Sent /, "");
-        } else if (subj.includes("[Email]") && subj.includes("[Out]")) {
-          type = "email";
-          direction = "outbound";
-          cleanSubject = subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim();
-        } else if (subj.includes("[Email]") && subj.includes("[In]")) {
-          type = "email";
-          direction = "inbound";
-          cleanSubject = subj.replace(/\[Outreach\]\s*/g, "").replace(/\[Email\]\s*/g, "").replace(/\[(Out|In)\]\s*/g, "").trim();
-        } else if (subj.startsWith("Submitted Form")) {
-          type = "form";
-          direction = "inbound";
-          cleanSubject = "Form submission";
-        } else if ((a.Type || "").toLowerCase() === "call") {
-          type = "call";
-        } else if ((a.Type || "").toLowerCase() === "meeting") {
-          type = "meeting";
-        } else if ((a.Type || "").toLowerCase() === "email") {
-          type = "email";
-        }
-
-        allActivities.push({
-          date: dateStr, time: timeStr, type, direction,
-          subject: cleanSubject, contact: a.Who?.Name || "—",
-          company: a.What?.Name || "—", source: "Outreach",
-          sortDate: a.CreatedDate || "",
-        });
-      });
 
       if (events && events.length) events.forEach(e => {
         const subj = e.Subject || "";
