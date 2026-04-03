@@ -85,6 +85,10 @@ export default function App() {
   const [pipelineTab, setPipelineTab] = useState("opps"); // opps | activities | accounts | leads
   const [copiedId, setCopiedId] = useState(null);
   const [activityFilter, setActivityFilter] = useState("all");
+  const [actionQueue, setActionQueue] = useState("external"); // external | internal
+  const [liveActions, setLiveActions] = useState(null);
+  const [actionsLoading, setActionsLoading] = useState(false);
+  const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
 
   // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -179,6 +183,28 @@ export default function App() {
       .then(r => r.json())
       .then(data => { if (data.activities?.length) setCalendarActivities(data.activities); })
       .catch(() => {});
+  }, []);
+
+  // ── Fetch live daily actions ──────────────────────────────────
+  useEffect(() => {
+    setActionsLoading(true);
+    fetch("/.netlify/functions/daily-actions")
+      .then(r => r.json())
+      .then(data => {
+        if (data.external || data.internal) setLiveActions(data);
+        setActionsLoading(false);
+      })
+      .catch(() => setActionsLoading(false));
+  }, []);
+
+  // Persist action done/skipped statuses
+  useEffect(() => {
+    save({ ...load(), actionStatuses });
+  }, [actionStatuses]);
+
+  const markLiveAction = useCallback((id, status) => {
+    setActionStatuses(prev => ({ ...prev, [id]: status }));
+    setToast(status === "done" ? "Marked as done" : status === "skipped" ? "Skipped" : "Reopened");
   }, []);
 
   // Merge all activity sources: SFDC Events + Gmail + Calendar
@@ -327,7 +353,7 @@ export default function App() {
           <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #10B981, #059669)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, color: "#fff" }}>S</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "#F1F5F9" }}>Skaled SDR Cockpit</div>
-            <div style={{ fontSize: 11, color: "#64748B" }}>{REP.name} — {REP.quarter} · {REP.weekLabel}</div>
+            <div style={{ fontSize: 11, color: "#64748B" }}>Jake Dunlap — CEO · {REP.quarter}</div>
           </div>
         </div>
         <div style={s.nav}>
@@ -425,17 +451,61 @@ export default function App() {
       <div style={s.content}>
 
         {/* ── DAILY ACTIONS VIEW ────────────────────────────── */}
-        {view === "actions" && (
+        {view === "actions" && (() => {
+          const currentActions = liveActions
+            ? (actionQueue === "external" ? liveActions.external : liveActions.internal) || []
+            : filteredActions;
+          const isLive = !!liveActions;
+          const externalCount = liveActions ? (liveActions.external || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length : 0;
+          const internalCount = liveActions ? (liveActions.internal || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length : 0;
+
+          return (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={s.sectionTitle}>Today's Action Plan — {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button style={s.btn("#334155")} onClick={() => setActions(DAILY_ACTIONS.map(a => ({ ...a, status: "pending" })))}>Reset All</button>
+              <div style={s.sectionTitle}>
+                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                {actionsLoading && <span style={{ fontSize: 12, color: "#F59E0B", marginLeft: 8 }}>Loading...</span>}
               </div>
+              {isLive && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={s.btn("#334155")} onClick={() => setActionStatuses({})}>Reset All</button>
+                </div>
+              )}
             </div>
+
+            {/* Queue toggle */}
+            {isLive && (
+              <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+                <button
+                  style={{
+                    padding: "8px 18px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
+                    fontSize: 13, fontWeight: 600,
+                    background: actionQueue === "external" ? "#10B981" : "transparent",
+                    color: actionQueue === "external" ? "#fff" : "#94A3B8",
+                  }}
+                  onClick={() => setActionQueue("external")}
+                >
+                  External — New Business {externalCount > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 6, fontSize: 11 }}>{externalCount}</span>}
+                </button>
+                <button
+                  style={{
+                    padding: "8px 18px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
+                    fontSize: 13, fontWeight: 600,
+                    background: actionQueue === "internal" ? "#3B82F6" : "transparent",
+                    color: actionQueue === "internal" ? "#fff" : "#94A3B8",
+                  }}
+                  onClick={() => setActionQueue("internal")}
+                >
+                  Internal — Clients & Team {internalCount > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 6, fontSize: 11 }}>{internalCount}</span>}
+                </button>
+              </div>
+            )}
+
+            {/* Priority badges */}
             <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
               {["critical", "high", "medium", "low"].map(p => {
-                const count = filteredActions.filter(a => a.priority === p && a.status === "pending").length;
+                const count = currentActions.filter(a => a.priority === p && actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
+                if (count === 0) return null;
                 return (
                   <span key={p} style={{ ...s.badge(PRIORITY_COLORS[p]), fontSize: 11 }}>
                     {p.charAt(0).toUpperCase() + p.slice(1)}: {count}
@@ -444,17 +514,24 @@ export default function App() {
               })}
             </div>
 
-            {filteredActions.map(action => {
+            {currentActions.length === 0 && !actionsLoading && (
+              <div style={{ ...s.card, cursor: "default", textAlign: "center", color: "#64748B", padding: 32 }}>
+                {isLive ? "No actions in this queue" : "Loading actions..."}
+              </div>
+            )}
+
+            {currentActions.map(action => {
               const expanded = expandedAction === action.id;
-              const done = action.status === "done";
-              const skipped = action.status === "skipped";
+              const status = isLive ? (actionStatuses[action.id] || "pending") : action.status;
+              const done = status === "done";
+              const skipped = status === "skipped";
               return (
                 <div
                   key={action.id}
                   className="card-hover"
                   style={{
                     ...s.card,
-                    borderLeft: `3px solid ${PRIORITY_COLORS[action.priority]}`,
+                    borderLeft: `3px solid ${PRIORITY_COLORS[action.priority] || "#64748B"}`,
                     opacity: done || skipped ? 0.5 : 1,
                   }}
                   onClick={() => setExpandedAction(expanded ? null : action.id)}
@@ -478,31 +555,21 @@ export default function App() {
 
                   {expanded && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #334155", animation: "fadeIn .2s" }}>
-                      {action.contact && (
-                        <div style={{ display: "flex", gap: 16, marginBottom: 10, fontSize: 12 }}>
-                          <span><strong style={{ color: "#F1F5F9" }}>Contact:</strong> {action.contact}</span>
-                          {action.company && <span><strong style={{ color: "#F1F5F9" }}>Company:</strong> {action.company}</span>}
-                          {action.role && <span><strong style={{ color: "#F1F5F9" }}>Role:</strong> {action.role}</span>}
-                        </div>
-                      )}
                       <div style={{ background: "#0F172A", borderRadius: 6, padding: 12, fontSize: 13, color: "#CBD5E1", lineHeight: 1.5, marginBottom: 12 }}>
                         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>Suggested Action</div>
                         {action.suggestedAction}
                       </div>
                       <div style={{ display: "flex", gap: 8 }} onClick={e => e.stopPropagation()}>
-                        {action.status === "pending" && (
+                        {status === "pending" && (
                           <>
-                            <button style={s.btn("#10B981")} onClick={() => markAction(action.id, "done")}>Mark Done</button>
-                            <button style={s.btn("#64748B")} onClick={() => markAction(action.id, "skipped")}>Skip</button>
+                            <button style={s.btn("#10B981")} onClick={() => isLive ? markLiveAction(action.id, "done") : markAction(action.id, "done")}>Mark Done</button>
+                            <button style={s.btn("#64748B")} onClick={() => isLive ? markLiveAction(action.id, "skipped") : markAction(action.id, "skipped")}>Skip</button>
                           </>
                         )}
                         {(done || skipped) && (
-                          <button style={s.btn("#334155")} onClick={() => markAction(action.id, "pending")}>Reopen</button>
+                          <button style={s.btn("#334155")} onClick={() => isLive ? markLiveAction(action.id, "pending") : markAction(action.id, "pending")}>Reopen</button>
                         )}
-                        <button style={s.btn("#1E293B")} onClick={() => copyText(action.suggestedAction, "suggested action")}>Copy Action</button>
-                        {action.contact && (
-                          <button style={s.btn("#1E293B")} onClick={() => emailAction(action.contact, `Re: ${action.title}`, action.suggestedAction)}>Email</button>
-                        )}
+                        <button style={s.btn("#1E293B")} onClick={() => copyText(action.suggestedAction, "suggested action")}>Copy</button>
                       </div>
                     </div>
                   )}
@@ -510,7 +577,8 @@ export default function App() {
               );
             })}
           </div>
-        )}
+          );
+        })()}
 
         {/* ── OUTREACH VIEW ─────────────────────────────────── */}
         {view === "outreach" && (
