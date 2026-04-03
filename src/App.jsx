@@ -6,6 +6,8 @@ import {
 } from "./mockData";
 import { useSalesforce } from "./useSalesforce";
 import { useActions } from "./useActions";
+import { useAuth } from "./useAuth";
+import { useStore } from "./useStore";
 import EmailComposer from "./components/EmailComposer";
 import DealInspector from "./components/DealInspector";
 import DailyBrief from "./components/DailyBrief";
@@ -78,11 +80,50 @@ const CHANNEL_COLORS = { email: "#3B82F6", phone: "#8B5CF6", outreach: "#F59E0B"
 const STATUS_COLORS = { "Active Opp": "#10B981", Stalled: "#EF4444", Prospecting: "#F59E0B", New: "#3B82F6", Working: "#F59E0B" };
 const ACTIVITY_ICONS = { email: "✉", call: "📞", linkedin: "💬", meeting: "📅" };
 
+// ── Login Screen ──────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [pw, setPw] = useState("");
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  return (
+    <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: "#0F172A", borderRadius: 16, padding: 40, width: 380, border: "1px solid #1E293B", textAlign: "center" }}>
+        <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg, #10B981, #059669)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 20, color: "#fff", margin: "0 auto 16px" }}>S</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: "#F1F5F9", marginBottom: 4 }}>CEO Cockpit</div>
+        <div style={{ fontSize: 13, color: "#64748B", marginBottom: 24 }}>Skaled Consulting</div>
+        <input
+          style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 8, padding: "12px 14px", color: "#E2E8F0", fontSize: 14, marginBottom: 12, boxSizing: "border-box", textAlign: "center" }}
+          type="password" placeholder="Password" value={pw}
+          onChange={e => setPw(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && pw) { setLoading(true); setError(null); onLogin(pw).then(r => { if (!r.success) { setError(r.error); setLoading(false); } }); } }}
+          autoFocus
+        />
+        {error && <div style={{ fontSize: 12, color: "#EF4444", marginBottom: 10 }}>{error}</div>}
+        <button
+          style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, background: "#10B981", color: "#fff", opacity: loading || !pw ? 0.6 : 1 }}
+          disabled={loading || !pw}
+          onClick={() => { setLoading(true); setError(null); onLogin(pw).then(r => { if (!r.success) { setError(r.error); setLoading(false); } }); }}
+        >{loading ? "Logging in..." : "Log In"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ───────────────────────────────────────────────────
 export default function App() {
+  const auth = useAuth();
+  const store = useStore();
   const sfdc = useSalesforce();
   const [toast, setToast] = useState(null);
   const act = useActions(setToast);
+
+  // Show login if not authenticated
+  if (auth.loading) return (
+    <div style={{ minHeight: "100vh", background: "#0F1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ color: "#64748B", fontSize: 14 }}>Loading...</div>
+    </div>
+  );
+  if (!auth.authenticated) return <LoginScreen onLogin={auth.login} />;
   const [view, setView] = useState("actions"); // actions | outreach | pipeline
   const [actions, setActions] = useState(() => {
     const saved = load();
@@ -102,6 +143,7 @@ export default function App() {
   const [liveActions, setLiveActions] = useState(null);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
+  const [storeLoaded, setStoreLoaded] = useState(false);
   const [selectedOpps, setSelectedOpps] = useState(new Set());
   const [oppSortAsc, setOppSortAsc] = useState(true);
   const [bulkAction, setBulkAction] = useState(null);
@@ -236,12 +278,27 @@ export default function App() {
       .catch(() => setActionsLoading(false));
   }, []);
 
-  // Persist action done/skipped statuses + custom actions
+  // Load from blob store on mount
+  useEffect(() => {
+    (async () => {
+      const [savedStatuses, savedCustom] = await Promise.all([
+        store.get("actionStatuses"),
+        store.get("customActions"),
+      ]);
+      if (savedStatuses && Object.keys(savedStatuses).length) setActionStatuses(savedStatuses);
+      if (savedCustom && savedCustom.length) setCustomActions(savedCustom);
+      setStoreLoaded(true);
+    })();
+  }, []);
+
+  // Persist to both localStorage (instant) and blob store (debounced)
   useEffect(() => {
     save({ ...load(), actionStatuses });
+    if (storeLoaded) store.set("actionStatuses", actionStatuses);
   }, [actionStatuses]);
   useEffect(() => {
     save({ ...load(), customActions });
+    if (storeLoaded) store.set("customActions", customActions);
   }, [customActions]);
 
   const markLiveAction = useCallback((id, status) => {
@@ -433,6 +490,7 @@ export default function App() {
           {liveOpps && <span style={{ fontSize: 10, color: "#64748B", background: "#1E293B", padding: "2px 6px", borderRadius: 3 }}>LIVE</span>}
           <button style={{ ...s.btn("#8B5CF6"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowDailyBrief(true)}>AI Brief</button>
           <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowWeeklyDigest(true)}>Weekly</button>
+          <button style={{ ...s.btn("#1E293B"), fontSize: 11, padding: "4px 10px", color: "#64748B" }} onClick={auth.logout}>Logout</button>
         </div>
       </div>
 
