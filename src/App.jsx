@@ -113,7 +113,7 @@ export default function App() {
     if (!sfdc.connected) return;
     setSfdcLoading(true);
     Promise.all([
-      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
+      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
       sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
       sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
       sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
@@ -121,6 +121,7 @@ export default function App() {
       if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
         contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
+        forecastCategory: o.Group_Forecast_Category__c || "—",
         probability: o.Probability || 0, closeDate: o.CloseDate || "—",
         lastActivity: o.LastActivityDate || "—", nextStep: "—",
         daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
@@ -688,6 +689,21 @@ export default function App() {
                                 onChange={e => setOppEdits(d => ({ ...d, NextStep: e.target.value }))}
                               />
                             </div>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Group Forecast Category</div>
+                              <select
+                                style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13 }}
+                                value={oppEdits.Group_Forecast_Category__c || ""}
+                                onChange={e => setOppEdits(d => ({ ...d, Group_Forecast_Category__c: e.target.value }))}
+                              >
+                                <option value="">No change</option>
+                                <option>Omitted</option>
+                                <option>Pipeline</option>
+                                <option>Best Case</option>
+                                <option>Commit</option>
+                                <option>Closed</option>
+                              </select>
+                            </div>
                           </div>
                           <div style={{ display: "flex", gap: 8 }}>
                             <button
@@ -699,6 +715,7 @@ export default function App() {
                                 if (oppEdits.CloseDate) fields.CloseDate = oppEdits.CloseDate;
                                 if (oppEdits.Amount) fields.Amount = oppEdits.Amount;
                                 if (oppEdits.NextStep) fields.NextStep = oppEdits.NextStep;
+                                if (oppEdits.Group_Forecast_Category__c) fields.Group_Forecast_Category__c = oppEdits.Group_Forecast_Category__c;
                                 if (Object.keys(fields).length === 0) { setToast("No changes to save"); return; }
                                 const sfdcId = action.id.replace("opp-", "");
                                 const ok = await act.updateSFDC("Opportunity", sfdcId, fields);
@@ -845,11 +862,20 @@ export default function App() {
                         </span>
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12, color: "#64748B" }}>
+                    <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12, color: "#64748B", flexWrap: "wrap" }}>
                       <span>Close: {opp.closeDate}</span>
                       <span>Prob: {opp.probability}%</span>
                       <span>{opp.daysInStage}d in stage</span>
                       <span>Last activity: {opp.lastActivity}</span>
+                      {opp.forecastCategory && opp.forecastCategory !== "—" && (
+                        <span style={s.badge(
+                          opp.forecastCategory === "Closed" ? "#10B981" :
+                          opp.forecastCategory === "Commit" ? "#3B82F6" :
+                          opp.forecastCategory === "Best Case" ? "#F59E0B" : "#64748B"
+                        )}>
+                          {opp.forecastCategory}
+                        </span>
+                      )}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 12 }}>
                       <strong style={{ color: "#F1F5F9" }}>Next step:</strong>{" "}
@@ -892,6 +918,15 @@ export default function App() {
                             <input style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
                               placeholder="Next step..." value={oppEdits.NextStep || ""} onChange={e => setOppEdits(d => ({ ...d, NextStep: e.target.value }))} />
                           </div>
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Group Forecast Category</div>
+                            <select style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
+                              value={oppEdits.Group_Forecast_Category__c || ""} onChange={e => setOppEdits(d => ({ ...d, Group_Forecast_Category__c: e.target.value }))}>
+                              <option value="">No change</option>
+                              <option>Omitted</option><option>Pipeline</option><option>Best Case</option>
+                              <option>Commit</option><option>Closed</option>
+                            </select>
+                          </div>
                         </div>
                         <div style={{ display: "flex", gap: 8 }}>
                           <button style={{ ...s.btn("#F59E0B"), opacity: act.sending === "sfdc" ? 0.6 : 1 }} disabled={act.sending === "sfdc"}
@@ -901,6 +936,7 @@ export default function App() {
                               if (oppEdits.CloseDate) fields.CloseDate = oppEdits.CloseDate;
                               if (oppEdits.Amount) fields.Amount = oppEdits.Amount;
                               if (oppEdits.NextStep) fields.NextStep = oppEdits.NextStep;
+                              if (oppEdits.Group_Forecast_Category__c) fields.Group_Forecast_Category__c = oppEdits.Group_Forecast_Category__c;
                               if (Object.keys(fields).length === 0) { setToast("No changes"); return; }
                               const ok = await act.updateSFDC("Opportunity", opp.id, fields);
                               if (ok) { setEditingOpp(null); setOppEdits({}); }
