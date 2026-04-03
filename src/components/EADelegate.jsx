@@ -103,6 +103,7 @@ export default function EADelegate({ action, onClose, onDelegated }) {
           priority,
           dueDate,
           eaEmail: targetEmail,
+          sfdcId: action?.id?.startsWith("opp-") ? action.id.replace("opp-", "") : null,
         }),
       });
       const data = await res.json();

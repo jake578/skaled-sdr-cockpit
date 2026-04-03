@@ -5,7 +5,7 @@ export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
   try {
-    const { actionTitle, actionDetails, priority, dueDate, eaEmail } = await req.json();
+    const { actionTitle, actionDetails, priority, dueDate, eaEmail, sfdcId } = await req.json();
 
     if (!actionTitle || !eaEmail) {
       return Response.json({ error: "Missing required fields: actionTitle, eaEmail" }, { status: 400 });
@@ -65,6 +65,12 @@ export default async (req) => {
     <div style="background: white; border: 1px solid #E2E8F0; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       <p style="margin: 0 0 8px; font-weight: 600; color: #64748B; font-size: 13px;">Details & Context</p>
       <p style="margin: 0; color: #334155; font-size: 14px; line-height: 1.6;">${actionDetails.replace(/\n/g, "<br>")}</p>
+    </div>
+    ` : ""}
+
+    ${sfdcId ? `
+    <div style="background: white; border: 1px solid #E2E8F0; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; text-align: center;">
+      <a href="https://skaled.my.salesforce.com/${sfdcId}" style="display: inline-block; background: #0070D2; color: white; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-size: 13px; font-weight: 600;">Open in Salesforce</a>
     </div>
     ` : ""}
 
