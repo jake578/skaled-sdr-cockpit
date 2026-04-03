@@ -152,7 +152,7 @@ export default function App() {
       if (events && events.length) events.forEach(e => {
         const subj = e.Subject || "";
         const dateStr = e.StartDateTime ? e.StartDateTime.split("T")[0] : e.CreatedDate ? e.CreatedDate.split("T")[0] : "—";
-        const timeStr = e.StartDateTime ? new Date(e.StartDateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+        const timeStr = e.StartDateTime ? new Date(e.StartDateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) : "";
 
         let type = "meeting";
         let cleanSubject = subj;
@@ -520,7 +520,7 @@ export default function App() {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div style={s.sectionTitle}>
-                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" })}
                 {actionsLoading && <span style={{ fontSize: 12, color: "#F59E0B", marginLeft: 8 }}>Loading...</span>}
               </div>
               {isLive && (
@@ -617,11 +617,11 @@ export default function App() {
                 <span style={{ fontSize: 12, color: "#64748B", marginRight: 4 }}>Priority:</span>
                 <button style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer", fontSize: 11, fontWeight: 600, background: !oppEdits.priorityFilter ? "#10B981" : "transparent", color: !oppEdits.priorityFilter ? "#fff" : "#94A3B8" }}
                   onClick={() => setOppEdits(d => ({ ...d, priorityFilter: null }))}>
-                  All ({(liveActions ? queueMap[actionQueue] || [] : []).length})
+                  All ({(liveActions ? (queueMap[actionQueue] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped") : []).length})
                 </button>
                 {["critical", "high", "medium", "low"].map(p => {
-                  const unfilteredQueue = liveActions ? queueMap[actionQueue] || [] : [];
-                  const count = unfilteredQueue.filter(a => a.priority === p).length;
+                  const activeQueue = liveActions ? (queueMap[actionQueue] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped") : [];
+                  const count = activeQueue.filter(a => a.priority === p).length;
                   if (count === 0) return null;
                   return (
                     <button key={p} style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer", fontSize: 11, fontWeight: 600, background: oppEdits.priorityFilter === p ? PRIORITY_COLORS[p] : "transparent", color: oppEdits.priorityFilter === p ? "#fff" : "#94A3B8" }}

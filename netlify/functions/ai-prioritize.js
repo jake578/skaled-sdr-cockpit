@@ -29,10 +29,10 @@ export default async (req) => {
           const start = e.start?.dateTime || e.start?.date || "";
           const end = e.end?.dateTime || e.end?.date || "";
           const timeStr = e.start?.dateTime
-            ? new Date(e.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+            ? new Date(e.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })
             : "All day";
           const endTimeStr = e.end?.dateTime
-            ? new Date(e.end.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+            ? new Date(e.end.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })
             : "";
           const attendees = (e.attendees || []).filter(a => !a.self).map(a => `${a.displayName || a.email}${(a.email || "").includes("skaled.com") ? " (internal)" : ""}`).join(", ");
           calendarContext += `- ${timeStr}${endTimeStr ? ` - ${endTimeStr}` : ""}: ${e.summary || "—"} | With: ${attendees || "no attendees"}\n`;

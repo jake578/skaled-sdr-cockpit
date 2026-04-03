@@ -46,7 +46,7 @@ export default async (req) => {
 
       return {
         date: dateStr ? dateStr.split("T")[0] : "—",
-        time: dateStr ? new Date(dateStr).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "",
+        time: dateStr ? new Date(dateStr).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) : "",
         type: "email",
         direction,
         subject: headers.subject || "—",

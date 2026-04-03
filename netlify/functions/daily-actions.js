@@ -31,7 +31,7 @@ export default async (req) => {
       const start = event.start?.dateTime || event.start?.date || "";
       const dateStr = start ? start.split("T")[0] : "—";
       const timeStr = event.start?.dateTime
-        ? new Date(event.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+        ? new Date(event.start.dateTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })
         : "All day";
 
       const attendees = (event.attendees || [])
