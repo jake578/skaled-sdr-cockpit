@@ -153,6 +153,7 @@ export default function App() {
   const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [customActions, setCustomActions] = useState(() => load().customActions || []);
+  const [closedWonOpps, setClosedWonOpps] = useState(null);
 
   // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -171,7 +172,8 @@ export default function App() {
       sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
       sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
       sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
-    ]).then(([opps, events, accounts, leads]) => {
+      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
+    ]).then(([opps, events, accounts, leads, wonOpps]) => {
       if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
         contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
@@ -233,6 +235,11 @@ export default function App() {
         name: l.Name, company: l.Company || "—", title: l.Title || "—",
         status: l.Status || "—", source: l.LeadSource || "—",
         score: 0, lastTouch: l.CreatedDate ? l.CreatedDate.split("T")[0] : "—",
+      })));
+      if (wonOpps && wonOpps.length) setClosedWonOpps(wonOpps.map(o => ({
+        id: o.Id, name: o.Name, account: o.Account?.Name || "—",
+        amount: o.Amount || 0, closeDate: o.CloseDate || "—",
+        source: o.LeadSource || "—", forecastCategory: o.Group_Forecast_Category__c || "—",
       })));
       setSfdcLoading(false);
     });
@@ -517,7 +524,7 @@ export default function App() {
             {liveMetrics ? `${liveMetrics.openDeals} open` : `${displayOpps.length} open`}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("dashboard"); setPipelineTab("forecast"); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("closedWon"); }}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.wonAmountThisQuarter) : "..."}</div>
           <div style={s.metricLabel}>{liveMetrics?.quarterLabel || "Quarter"} Won</div>
           <div style={{ ...s.metricSub, color: "#10B981" }}>
@@ -947,7 +954,7 @@ export default function App() {
           <div>
             {/* Sub-tabs */}
             <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
-              {[["opps", "Opportunities"], ["activities", "Activities"], ["accounts", "Accounts"], ["leads", "Leads"]].map(([key, label]) => (
+              {[["opps", "Opportunities"], ["closedWon", "Closed Won"], ["activities", "Activities"], ["accounts", "Accounts"], ["leads", "Leads"]].map(([key, label]) => (
                 <button
                   key={key}
                   style={{
@@ -1296,6 +1303,30 @@ export default function App() {
             )}
 
             {/* Activities */}
+            {/* Closed Won */}
+            {pipelineTab === "closedWon" && (
+              <div>
+                <div style={s.sectionTitle}>
+                  Closed Won This Quarter — {closedWonOpps ? fmt(closedWonOpps.reduce((sum, o) => sum + (o.amount || 0), 0)) : "..."} ({closedWonOpps?.length || 0} deals)
+                </div>
+                {!closedWonOpps && <div style={{ color: "#64748B", textAlign: "center", padding: 40 }}>Connect Salesforce to view closed won deals</div>}
+                {closedWonOpps?.map(opp => (
+                  <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: "3px solid #10B981" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>{opp.account} · {opp.source}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: "#10B981" }}>{fmt(opp.amount)}</div>
+                        <div style={{ fontSize: 11, color: "#64748B" }}>Closed {opp.closeDate}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {pipelineTab === "activities" && (
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
