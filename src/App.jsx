@@ -816,7 +816,7 @@ export default function App() {
                                 if (Object.keys(fields).length === 0) { setToast("No changes to save"); return; }
                                 const sfdcId = action.id.replace("opp-", "");
                                 const ok = await act.updateSFDC("Opportunity", sfdcId, fields);
-                                if (ok) { setEditingOpp(null); setOppEdits({}); }
+                                if (ok) { setEditingOpp(null); setOppEdits({}); markLiveAction(action.id, "done"); }
                               }}
                             >
                               {act.sending === "sfdc" ? "Saving..." : "Save to Salesforce"}
