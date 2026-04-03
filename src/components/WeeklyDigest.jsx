@@ -82,7 +82,8 @@ export default function WeeklyDigest({ onClose }) {
       })
       .then(d => {
         if (d.error) { setError(d.error); setLoading(false); return; }
-        setData(d);
+        // Flatten metrics into top level for component access
+        setData({ ...d, ...(d.metrics || {}) });
         setLoading(false);
       })
       .catch(e => { setError("Failed to load weekly digest: " + e.message); setLoading(false); });

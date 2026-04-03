@@ -138,7 +138,7 @@ export default function DailyBrief({ onClose }) {
             <div style={styles.body}>
               <div style={styles.sectionTitle}>Top 10 Actions for Today</div>
 
-              {(data.actions || []).slice(0, 10).map((item, i) => (
+              {(data.topActions || data.actions || []).slice(0, 10).map((item, i) => (
                 <div key={i} style={styles.card}>
                   <div style={{
                     ...styles.rankBadge,
