@@ -466,12 +466,25 @@ export default function App() {
 
         {/* ── DAILY ACTIONS VIEW ────────────────────────────── */}
         {view === "actions" && (() => {
-          const currentActions = liveActions
-            ? (actionQueue === "external" ? liveActions.external : liveActions.internal) || []
-            : filteredActions;
+          const queueMap = {
+            external: liveActions?.external || [],
+            internal: liveActions?.internal || [],
+            sfdcCleanup: liveActions?.sfdcCleanup || [],
+            dealsAtRisk: liveActions?.dealsAtRisk || [],
+          };
+          let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : filteredActions;
+          if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
+            currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
+          }
           const isLive = !!liveActions;
-          const externalCount = liveActions ? (liveActions.external || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length : 0;
-          const internalCount = liveActions ? (liveActions.internal || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length : 0;
+          const countFor = (key) => (queueMap[key] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
+
+          const queues = [
+            { key: "external", label: "External", color: "#10B981" },
+            { key: "internal", label: "Internal", color: "#3B82F6" },
+            { key: "sfdcCleanup", label: "SFDC Cleanup", color: "#F59E0B" },
+            { key: "dealsAtRisk", label: "Deals at Risk", color: "#EF4444" },
+          ];
 
           return (
           <div>
@@ -489,29 +502,35 @@ export default function App() {
 
             {/* Queue toggle */}
             {isLive && (
-              <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
-                <button
-                  style={{
-                    padding: "8px 18px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
-                    fontSize: 13, fontWeight: 600,
-                    background: actionQueue === "external" ? "#10B981" : "transparent",
-                    color: actionQueue === "external" ? "#fff" : "#94A3B8",
-                  }}
-                  onClick={() => setActionQueue("external")}
-                >
-                  External — New Business {externalCount > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 6, fontSize: 11 }}>{externalCount}</span>}
-                </button>
-                <button
-                  style={{
-                    padding: "8px 18px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
-                    fontSize: 13, fontWeight: 600,
-                    background: actionQueue === "internal" ? "#3B82F6" : "transparent",
-                    color: actionQueue === "internal" ? "#fff" : "#94A3B8",
-                  }}
-                  onClick={() => setActionQueue("internal")}
-                >
-                  Internal — Clients & Team {internalCount > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 6, fontSize: 11 }}>{internalCount}</span>}
-                </button>
+              <div style={{ display: "flex", gap: 4, marginBottom: 16, flexWrap: "wrap" }}>
+                {queues.map(q => {
+                  const cnt = countFor(q.key);
+                  return (
+                    <button key={q.key}
+                      style={{
+                        padding: "8px 16px", borderRadius: 6, border: "1px solid #334155", cursor: "pointer",
+                        fontSize: 12, fontWeight: 600,
+                        background: actionQueue === q.key ? q.color : "transparent",
+                        color: actionQueue === q.key ? "#fff" : "#94A3B8",
+                      }}
+                      onClick={() => setActionQueue(q.key)}
+                    >
+                      {q.label} {cnt > 0 && <span style={{ background: "rgba(255,255,255,0.2)", padding: "1px 6px", borderRadius: 10, marginLeft: 4, fontSize: 11 }}>{cnt}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Sort controls for SFDC Cleanup */}
+            {actionQueue === "sfdcCleanup" && currentActions.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "#64748B" }}>Sort:</span>
+                <button style={s.btn(oppEdits.cleanupSort === "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "asc" }))}>Oldest first</button>
+                <button style={s.btn(oppEdits.cleanupSort !== "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "desc" }))}>Newest first</button>
+                <span style={{ fontSize: 12, color: "#64748B", marginLeft: 8 }}>
+                  {currentActions.filter(a => a.tag === "past-due").length} past due · {currentActions.filter(a => a.tag === "closing-soon").length} closing this week
+                </span>
               </div>
             )}
 

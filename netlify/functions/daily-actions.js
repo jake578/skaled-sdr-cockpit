@@ -4,7 +4,7 @@ import { getAccessToken } from "./google-auth.js";
 export default async (req) => {
   try {
     const token = await getAccessToken();
-    const actions = { external: [], internal: [] };
+    const actions = { external: [], internal: [], sfdcCleanup: [], dealsAtRisk: [] };
 
     // ── 1. Calendar: today + next 2 days ─────────────────────
     const now = new Date();
@@ -205,6 +205,112 @@ export default async (req) => {
             suggestedAction: `New lead from ${l.Company || "unknown"}. Research and qualify.`,
           });
         });
+
+        // ── 4. SFDC Cleanup: past due close dates + closing next week ──
+        const todayStr = now.toISOString().split("T")[0];
+        const nextWeekStr = new Date(now.getTime() + 7 * 86400000).toISOString().split("T")[0];
+
+        const pastDueOpps = await sfdcQuery(
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 50`
+        );
+
+        pastDueOpps.forEach(o => {
+          const daysOverdue = Math.floor((now.getTime() - new Date(o.CloseDate).getTime()) / 86400000);
+          actions.sfdcCleanup.push({
+            id: `opp-${o.Id}`,
+            type: "follow-up",
+            priority: daysOverdue > 30 ? "critical" : daysOverdue > 14 ? "high" : "medium",
+            title: `${o.Name}`,
+            subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"} · ${o.Group_Forecast_Category__c || "—"}`,
+            channel: "salesforce",
+            dueTime: `${daysOverdue}d overdue`,
+            closeDate: o.CloseDate,
+            daysOverdue,
+            suggestedAction: `Close date was ${o.CloseDate} (${daysOverdue} days ago). Update close date, close lost, or advance the deal.`,
+            tag: "past-due",
+          });
+        });
+
+        const closingNextWeek = await sfdcQuery(
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND CloseDate >= ${todayStr} AND CloseDate <= ${nextWeekStr} ORDER BY CloseDate ASC LIMIT 20`
+        );
+
+        closingNextWeek.forEach(o => {
+          const daysToClose = Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000);
+          actions.sfdcCleanup.push({
+            id: `opp-${o.Id}`,
+            type: "follow-up",
+            priority: daysToClose <= 2 ? "critical" : "high",
+            title: `${o.Name}`,
+            subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"} · ${o.Group_Forecast_Category__c || "—"}`,
+            channel: "salesforce",
+            dueTime: daysToClose === 0 ? "Closes today" : `Closes in ${daysToClose}d`,
+            closeDate: o.CloseDate,
+            daysOverdue: -daysToClose,
+            suggestedAction: `Closing ${daysToClose === 0 ? "today" : `in ${daysToClose} days`}. Confirm this will close or push the date.`,
+            tag: "closing-soon",
+          });
+        });
+
+        // Sort cleanup: past due first (most overdue at top), then closing soon
+        actions.sfdcCleanup.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
+
+        // ── 5. Deals at Risk: close date moved 2+ times or no activity in 10+ days ──
+        // Get all open opps with history
+        const allOpenOpps = await sfdcQuery(
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 100`
+        );
+
+        // Check close date change history
+        let closeDateChanges = {};
+        try {
+          const historyRecords = await sfdcQuery(
+            `SELECT OpportunityId, OldValue, NewValue FROM OpportunityFieldHistory WHERE Field = 'CloseDate' AND CreatedDate >= LAST_N_DAYS:180`
+          );
+          historyRecords.forEach(h => {
+            closeDateChanges[h.OpportunityId] = (closeDateChanges[h.OpportunityId] || 0) + 1;
+          });
+        } catch {
+          // Field history tracking might not be enabled — fall back to activity-only detection
+        }
+
+        allOpenOpps.forEach(o => {
+          const daysSinceActivity = o.LastActivityDate
+            ? Math.floor((now.getTime() - new Date(o.LastActivityDate).getTime()) / 86400000)
+            : 999;
+          const closeDateMoves = closeDateChanges[o.Id] || 0;
+          const noRecentActivity = daysSinceActivity >= 11; // 1.5 weeks ≈ 10-11 days
+          const closeDateSlipped = closeDateMoves >= 2;
+
+          if (!noRecentActivity && !closeDateSlipped) return;
+
+          const reasons = [];
+          if (closeDateSlipped) reasons.push(`Close date moved ${closeDateMoves}x`);
+          if (noRecentActivity) reasons.push(`No activity in ${daysSinceActivity}d`);
+
+          actions.dealsAtRisk.push({
+            id: `opp-${o.Id}`,
+            type: "follow-up",
+            priority: (closeDateSlipped && noRecentActivity) ? "critical" : closeDateSlipped ? "high" : "high",
+            title: `${o.Name}`,
+            subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"} · ${o.Group_Forecast_Category__c || "—"}`,
+            channel: "salesforce",
+            dueTime: reasons.join(" · "),
+            closeDate: o.CloseDate,
+            closeDateMoves,
+            daysSinceActivity,
+            suggestedAction: `Risk signals: ${reasons.join(", ")}. Review deal health — re-engage contact, validate timeline, or close lost.`,
+            riskReasons: reasons,
+          });
+        });
+
+        actions.dealsAtRisk.sort((a, b) => {
+          // Sort by number of risk factors, then by days since activity
+          const aScore = (a.closeDateMoves >= 2 ? 2 : 0) + (a.daysSinceActivity >= 11 ? 1 : 0);
+          const bScore = (b.closeDateMoves >= 2 ? 2 : 0) + (b.daysSinceActivity >= 11 ? 1 : 0);
+          if (bScore !== aScore) return bScore - aScore;
+          return (b.daysSinceActivity || 0) - (a.daysSinceActivity || 0);
+        });
       }
     }
 
@@ -216,7 +322,7 @@ export default async (req) => {
 
     return Response.json(actions);
   } catch (e) {
-    return Response.json({ error: e.message, external: [], internal: [] }, { status: 500 });
+    return Response.json({ error: e.message, external: [], internal: [], sfdcCleanup: [], dealsAtRisk: [] }, { status: 500 });
   }
 };
 
