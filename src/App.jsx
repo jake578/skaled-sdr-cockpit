@@ -5,6 +5,7 @@ import {
   WEEKLY_ACTIVITY, PIPELINE_WEEKLY,
 } from "./mockData";
 import { useSalesforce } from "./useSalesforce";
+import { useActions } from "./useActions";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -73,6 +74,8 @@ const ACTIVITY_ICONS = { email: "✉", call: "📞", linkedin: "💬", meeting: 
 // ── Main App ───────────────────────────────────────────────────
 export default function App() {
   const sfdc = useSalesforce();
+  const [toast, setToast] = useState(null);
+  const act = useActions(setToast);
   const [view, setView] = useState("actions"); // actions | outreach | pipeline
   const [actions, setActions] = useState(() => {
     const saved = load();
@@ -81,14 +84,17 @@ export default function App() {
   });
   const [expandedAction, setExpandedAction] = useState(null);
   const [search, setSearch] = useState("");
-  const [toast, setToast] = useState(null);
-  const [pipelineTab, setPipelineTab] = useState("opps"); // opps | activities | accounts | leads
+  const [pipelineTab, setPipelineTab] = useState("opps");
   const [copiedId, setCopiedId] = useState(null);
   const [activityFilter, setActivityFilter] = useState("all");
-  const [actionQueue, setActionQueue] = useState("external"); // external | internal
+  const [actionQueue, setActionQueue] = useState("external");
   const [liveActions, setLiveActions] = useState(null);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
+  const [composing, setComposing] = useState(null); // action id being composed
+  const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
+  const [editingOpp, setEditingOpp] = useState(null);
+  const [oppEdits, setOppEdits] = useState({});
 
   // ── Live Data ────────────────────────────────────────────────
   const [liveOpps, setLiveOpps] = useState(null);
@@ -554,12 +560,14 @@ export default function App() {
                   </div>
 
                   {expanded && (
-                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #334155", animation: "fadeIn .2s" }}>
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #334155", animation: "fadeIn .2s" }} onClick={e => e.stopPropagation()}>
                       <div style={{ background: "#0F172A", borderRadius: 6, padding: 12, fontSize: 13, color: "#CBD5E1", lineHeight: 1.5, marginBottom: 12 }}>
                         <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>Suggested Action</div>
                         {action.suggestedAction}
                       </div>
-                      <div style={{ display: "flex", gap: 8 }} onClick={e => e.stopPropagation()}>
+
+                      {/* Action buttons */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                         {status === "pending" && (
                           <>
                             <button style={s.btn("#10B981")} onClick={() => isLive ? markLiveAction(action.id, "done") : markAction(action.id, "done")}>Mark Done</button>
@@ -569,8 +577,135 @@ export default function App() {
                         {(done || skipped) && (
                           <button style={s.btn("#334155")} onClick={() => isLive ? markLiveAction(action.id, "pending") : markAction(action.id, "pending")}>Reopen</button>
                         )}
+                        <button style={s.btn("#3B82F6")} onClick={() => {
+                          setComposing(composing === action.id ? null : action.id);
+                          setComposeData({ to: action.contact || "", subject: `Re: ${action.subtitle || action.title}`, body: "" });
+                        }}>
+                          {composing === action.id ? "Close Email" : "Send Email"}
+                        </button>
+                        {action.id?.startsWith("opp-") && (
+                          <button style={s.btn("#F59E0B")} onClick={() => setEditingOpp(editingOpp === action.id ? null : action.id)}>
+                            {editingOpp === action.id ? "Close Edit" : "Update Opp"}
+                          </button>
+                        )}
                         <button style={s.btn("#1E293B")} onClick={() => copyText(action.suggestedAction, "suggested action")}>Copy</button>
                       </div>
+
+                      {/* Inline email compose */}
+                      {composing === action.id && (
+                        <div style={{ background: "#0F172A", borderRadius: 8, padding: 14, marginBottom: 10, border: "1px solid #334155" }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#F1F5F9", marginBottom: 8 }}>Compose Email</div>
+                          <input
+                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 6 }}
+                            placeholder="To (email address)"
+                            value={composeData.to}
+                            onChange={e => setComposeData(d => ({ ...d, to: e.target.value }))}
+                          />
+                          <input
+                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, marginBottom: 6 }}
+                            placeholder="Subject"
+                            value={composeData.subject}
+                            onChange={e => setComposeData(d => ({ ...d, subject: e.target.value }))}
+                          />
+                          <textarea
+                            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13, minHeight: 100, resize: "vertical", marginBottom: 8 }}
+                            placeholder="Message body..."
+                            value={composeData.body}
+                            onChange={e => setComposeData(d => ({ ...d, body: e.target.value }))}
+                          />
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              style={{ ...s.btn("#10B981"), opacity: act.sending === "email" ? 0.6 : 1 }}
+                              disabled={act.sending === "email"}
+                              onClick={async () => {
+                                const ok = await act.sendEmail(composeData);
+                                if (ok) {
+                                  setComposing(null);
+                                  if (isLive) markLiveAction(action.id, "done");
+                                }
+                              }}
+                            >
+                              {act.sending === "email" ? "Sending..." : "Send"}
+                            </button>
+                            <button style={s.btn("#334155")} onClick={() => setComposing(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Inline SFDC opp edit */}
+                      {editingOpp === action.id && action.id?.startsWith("opp-") && (
+                        <div style={{ background: "#0F172A", borderRadius: 8, padding: 14, marginBottom: 10, border: "1px solid #334155" }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#F1F5F9", marginBottom: 8 }}>Update Opportunity</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Stage</div>
+                              <select
+                                style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13 }}
+                                value={oppEdits.StageName || ""}
+                                onChange={e => setOppEdits(d => ({ ...d, StageName: e.target.value }))}
+                              >
+                                <option value="">No change</option>
+                                <option>Prospecting</option>
+                                <option>Qualification</option>
+                                <option>Needs Analysis</option>
+                                <option>Value Proposition</option>
+                                <option>Proposal/Price Quote</option>
+                                <option>Negotiation/Review</option>
+                                <option>Closed Won</option>
+                                <option>Closed Lost</option>
+                              </select>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Close Date</div>
+                              <input
+                                type="date"
+                                style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13 }}
+                                value={oppEdits.CloseDate || ""}
+                                onChange={e => setOppEdits(d => ({ ...d, CloseDate: e.target.value }))}
+                              />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Amount</div>
+                              <input
+                                type="number"
+                                style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13 }}
+                                placeholder="Amount"
+                                value={oppEdits.Amount || ""}
+                                onChange={e => setOppEdits(d => ({ ...d, Amount: e.target.value ? Number(e.target.value) : "" }))}
+                              />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Next Step</div>
+                              <input
+                                style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px 10px", color: "#E2E8F0", fontSize: 13 }}
+                                placeholder="Next step..."
+                                value={oppEdits.NextStep || ""}
+                                onChange={e => setOppEdits(d => ({ ...d, NextStep: e.target.value }))}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              style={{ ...s.btn("#F59E0B"), opacity: act.sending === "sfdc" ? 0.6 : 1 }}
+                              disabled={act.sending === "sfdc"}
+                              onClick={async () => {
+                                const fields = {};
+                                if (oppEdits.StageName) fields.StageName = oppEdits.StageName;
+                                if (oppEdits.CloseDate) fields.CloseDate = oppEdits.CloseDate;
+                                if (oppEdits.Amount) fields.Amount = oppEdits.Amount;
+                                if (oppEdits.NextStep) fields.NextStep = oppEdits.NextStep;
+                                if (Object.keys(fields).length === 0) { setToast("No changes to save"); return; }
+                                const sfdcId = action.id.replace("opp-", "");
+                                const ok = await act.updateSFDC("Opportunity", sfdcId, fields);
+                                if (ok) { setEditingOpp(null); setOppEdits({}); }
+                              }}
+                            >
+                              {act.sending === "sfdc" ? "Saving..." : "Save to Salesforce"}
+                            </button>
+                            <button style={s.btn("#334155")} onClick={() => { setEditingOpp(null); setOppEdits({}); }}>Cancel</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -718,7 +853,59 @@ export default function App() {
                     <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                       <button style={s.btn("#1E293B")} onClick={() => copyText(`${opp.name}\nAmount: ${fmt(opp.amount)}\nStage: ${opp.stage}\nNext step: ${opp.nextStep}`, "opp details")}>Copy</button>
                       <button style={s.btn("#1E293B")} onClick={() => emailAction(opp.contact, `Re: ${opp.name}`, `Next step: ${opp.nextStep}`)}>Email</button>
+                      {liveOpps && (
+                        <button style={s.btn("#F59E0B")} onClick={() => { setEditingOpp(editingOpp === opp.id ? null : opp.id); setOppEdits({}); }}>
+                          {editingOpp === opp.id ? "Close" : "Edit in SFDC"}
+                        </button>
+                      )}
                     </div>
+                    {editingOpp === opp.id && liveOpps && (
+                      <div style={{ background: "#0F172A", borderRadius: 8, padding: 14, marginTop: 10, border: "1px solid #334155" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Stage</div>
+                            <select style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
+                              value={oppEdits.StageName || ""} onChange={e => setOppEdits(d => ({ ...d, StageName: e.target.value }))}>
+                              <option value="">No change</option>
+                              <option>Prospecting</option><option>Qualification</option><option>Needs Analysis</option>
+                              <option>Value Proposition</option><option>Proposal/Price Quote</option><option>Negotiation/Review</option>
+                              <option>Closed Won</option><option>Closed Lost</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Close Date</div>
+                            <input type="date" style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
+                              value={oppEdits.CloseDate || ""} onChange={e => setOppEdits(d => ({ ...d, CloseDate: e.target.value }))} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Amount</div>
+                            <input type="number" style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
+                              placeholder="Amount" value={oppEdits.Amount || ""} onChange={e => setOppEdits(d => ({ ...d, Amount: e.target.value ? Number(e.target.value) : "" }))} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#64748B", marginBottom: 2 }}>Next Step</div>
+                            <input style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 4, padding: "8px", color: "#E2E8F0", fontSize: 13 }}
+                              placeholder="Next step..." value={oppEdits.NextStep || ""} onChange={e => setOppEdits(d => ({ ...d, NextStep: e.target.value }))} />
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button style={{ ...s.btn("#F59E0B"), opacity: act.sending === "sfdc" ? 0.6 : 1 }} disabled={act.sending === "sfdc"}
+                            onClick={async () => {
+                              const fields = {};
+                              if (oppEdits.StageName) fields.StageName = oppEdits.StageName;
+                              if (oppEdits.CloseDate) fields.CloseDate = oppEdits.CloseDate;
+                              if (oppEdits.Amount) fields.Amount = oppEdits.Amount;
+                              if (oppEdits.NextStep) fields.NextStep = oppEdits.NextStep;
+                              if (Object.keys(fields).length === 0) { setToast("No changes"); return; }
+                              const ok = await act.updateSFDC("Opportunity", opp.id, fields);
+                              if (ok) { setEditingOpp(null); setOppEdits({}); }
+                            }}>
+                            {act.sending === "sfdc" ? "Saving..." : "Save to Salesforce"}
+                          </button>
+                          <button style={s.btn("#334155")} onClick={() => { setEditingOpp(null); setOppEdits({}); }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
