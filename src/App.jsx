@@ -87,6 +87,10 @@ export default function App() {
   const [pipelineTab, setPipelineTab] = useState("opps");
   const [copiedId, setCopiedId] = useState(null);
   const [activityFilter, setActivityFilter] = useState("all");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
   const [actionQueue, setActionQueue] = useState("external");
   const [liveActions, setLiveActions] = useState(null);
   const [actionsLoading, setActionsLoading] = useState(false);
@@ -250,6 +254,7 @@ export default function App() {
       if (e.key === "2") setView("outreach");
       if (e.key === "3") setView("pipeline");
       if (e.key === "/" && !e.metaKey) { e.preventDefault(); document.getElementById("search-input")?.focus(); }
+      if (e.key === "c" || e.key === "C") setChatOpen(prev => !prev);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -1055,8 +1060,144 @@ export default function App() {
         Keyboard: <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>1</kbd> Actions{" "}
         <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>2</kbd> Outreach{" "}
         <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>3</kbd> Pipeline{" "}
-        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>/</kbd> Search
+        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>/</kbd> Search{" "}
+        <kbd style={{ background: "#1E293B", padding: "2px 6px", borderRadius: 3, fontSize: 11 }}>C</kbd> Claude
       </div>
+
+      {/* ── Claude Chat Sidebar ───────────────────────────────── */}
+      {chatOpen && (
+        <div style={{
+          position: "fixed", top: 0, right: 0, width: 400, height: "100vh",
+          background: "#0F172A", borderLeft: "1px solid #1E293B",
+          display: "flex", flexDirection: "column", zIndex: 1000,
+          boxShadow: "-4px 0 20px rgba(0,0,0,0.4)",
+        }}>
+          {/* Chat header */}
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid #1E293B", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 6, background: "linear-gradient(135deg, #8B5CF6, #6D28D9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "#fff" }}>C</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>Claude</div>
+                <div style={{ fontSize: 10, color: "#64748B" }}>Has access to SFDC, Gmail, Calendar</div>
+              </div>
+            </div>
+            <button style={{ background: "none", border: "none", color: "#64748B", cursor: "pointer", fontSize: 18 }} onClick={() => setChatOpen(false)}>x</button>
+          </div>
+
+          {/* Quick actions */}
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid #1E293B", display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {["Summarize my pipeline", "What needs follow-up?", "Draft a check-in email", "What's on my calendar?"].map(q => (
+              <button key={q} style={{
+                padding: "4px 10px", borderRadius: 12, border: "1px solid #334155",
+                background: "transparent", color: "#94A3B8", fontSize: 11, cursor: "pointer",
+              }} onClick={() => { setChatInput(q); }}>{q}</button>
+            ))}
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+            {chatMsgs.length === 0 && (
+              <div style={{ textAlign: "center", color: "#475569", fontSize: 13, marginTop: 40 }}>
+                Ask me about your pipeline, emails, calendar, or anything else.
+              </div>
+            )}
+            {chatMsgs.map((m, i) => (
+              <div key={i} style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "85%",
+                background: m.role === "user" ? "#1E40AF" : "#1E293B",
+                borderRadius: 10, padding: "10px 14px", fontSize: 13,
+                color: "#E2E8F0", lineHeight: 1.5, whiteSpace: "pre-wrap",
+              }}>
+                {m.content}
+              </div>
+            ))}
+            {chatLoading && (
+              <div style={{ alignSelf: "flex-start", background: "#1E293B", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#64748B" }}>
+                Thinking...
+              </div>
+            )}
+          </div>
+
+          {/* Input */}
+          <div style={{ padding: 12, borderTop: "1px solid #1E293B", display: "flex", gap: 8 }}>
+            <input
+              style={{
+                flex: 1, background: "#1E293B", border: "1px solid #334155", borderRadius: 8,
+                padding: "10px 14px", color: "#E2E8F0", fontSize: 13,
+              }}
+              placeholder="Ask Claude..."
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && chatInput.trim() && !chatLoading) {
+                  const msg = chatInput.trim();
+                  setChatInput("");
+                  const newMsgs = [...chatMsgs, { role: "user", content: msg }];
+                  setChatMsgs(newMsgs);
+                  setChatLoading(true);
+                  fetch("/.netlify/functions/claude-chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: msg, history: chatMsgs }),
+                  })
+                    .then(r => r.json())
+                    .then(data => {
+                      setChatMsgs(prev => [...prev, { role: "assistant", content: data.reply || data.error || "Error" }]);
+                      setChatLoading(false);
+                    })
+                    .catch(() => {
+                      setChatMsgs(prev => [...prev, { role: "assistant", content: "Failed to reach Claude" }]);
+                      setChatLoading(false);
+                    });
+                }
+              }}
+            />
+            <button
+              style={{ ...s.btn("#8B5CF6"), padding: "10px 16px", opacity: chatLoading ? 0.6 : 1 }}
+              disabled={chatLoading || !chatInput.trim()}
+              onClick={() => {
+                if (!chatInput.trim() || chatLoading) return;
+                const msg = chatInput.trim();
+                setChatInput("");
+                const newMsgs = [...chatMsgs, { role: "user", content: msg }];
+                setChatMsgs(newMsgs);
+                setChatLoading(true);
+                fetch("/.netlify/functions/claude-chat", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ message: msg, history: chatMsgs }),
+                })
+                  .then(r => r.json())
+                  .then(data => {
+                    setChatMsgs(prev => [...prev, { role: "assistant", content: data.reply || data.error || "Error" }]);
+                    setChatLoading(false);
+                  })
+                  .catch(() => {
+                    setChatMsgs(prev => [...prev, { role: "assistant", content: "Failed to reach Claude" }]);
+                    setChatLoading(false);
+                  });
+              }}
+            >Send</button>
+          </div>
+        </div>
+      )}
+
+      {/* Chat toggle button (always visible) */}
+      {!chatOpen && (
+        <button
+          style={{
+            position: "fixed", bottom: 24, right: 24, width: 52, height: 52,
+            borderRadius: 14, border: "none", cursor: "pointer",
+            background: "linear-gradient(135deg, #8B5CF6, #6D28D9)",
+            color: "#fff", fontSize: 20, fontWeight: 700,
+            boxShadow: "0 4px 20px rgba(139,92,246,0.4)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 999,
+          }}
+          onClick={() => setChatOpen(true)}
+        >C</button>
+      )}
     </div>
   );
 }
