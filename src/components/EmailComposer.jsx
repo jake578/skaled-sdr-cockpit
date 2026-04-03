@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const TONES = ["Professional", "Casual", "Urgent", "Breakup"];
 
@@ -69,16 +69,27 @@ const styles = {
   },
 };
 
-export default function EmailComposer({ action, onSend, onClose, sendEmail }) {
-  const [mode, setMode] = useState("manual");
+export default function EmailComposer({ action, mode: initialMode, onSend, onClose, sendEmail }) {
+  const [mode, setMode] = useState(initialMode || "manual");
   const [tone, setTone] = useState("Professional");
   const [to, setTo] = useState(action?.contact || "");
   const [subject, setSubject] = useState(`Re: ${action?.subtitle || action?.title || ""}`);
   const [body, setBody] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [contextUsed, setContextUsed] = useState([]);
+  const [hasDrafted, setHasDrafted] = useState(false);
+  const didAutoRun = useRef(false);
 
-  const handleAiDraft = async () => {
+  // Auto-draft when opened in AI mode
+  useEffect(() => {
+    if (mode === "ai" && !hasDrafted && !didAutoRun.current) {
+      didAutoRun.current = true;
+      handleAiDraft();
+    }
+  }, []); // eslint-disable-line
+
+  const handleAiDraft = async (overrideTone) => {
     setAiLoading(true);
     try {
       const res = await fetch("/.netlify/functions/ai-email-writer", {
@@ -86,15 +97,16 @@ export default function EmailComposer({ action, onSend, onClose, sendEmail }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
-          tone: tone.toLowerCase(),
+          tone: (overrideTone || tone).toLowerCase(),
           to,
           subject,
           context: action?.suggestedAction || "",
         }),
       });
       const data = await res.json();
-      if (data.body) setBody(data.body);
+      if (data.body) { setBody(data.body); setHasDrafted(true); }
       if (data.subject) setSubject(data.subject);
+      if (data.context_used) setContextUsed(data.context_used);
     } catch {
       setBody("[AI draft failed - please write manually]");
     }
@@ -175,6 +187,16 @@ export default function EmailComposer({ action, onSend, onClose, sendEmail }) {
           />
         )}
 
+        {/* Context sources */}
+        {contextUsed.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "#64748B" }}>Context used:</span>
+            {contextUsed.map((src, i) => (
+              <span key={i} style={{ fontSize: 10, background: "#334155", color: "#94A3B8", padding: "2px 8px", borderRadius: 4 }}>{src}</span>
+            ))}
+          </div>
+        )}
+
         {/* Action buttons */}
         <div style={styles.actions}>
           <button
@@ -184,6 +206,9 @@ export default function EmailComposer({ action, onSend, onClose, sendEmail }) {
           >
             {sending ? "Sending..." : "Send"}
           </button>
+          {mode === "ai" && hasDrafted && !aiLoading && (
+            <button style={styles.btn("#8B5CF6")} onClick={() => handleAiDraft()}>Re-draft</button>
+          )}
           <button style={styles.btn("#334155")} onClick={onClose}>Cancel</button>
         </div>
       </div>

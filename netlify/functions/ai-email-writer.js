@@ -1,24 +1,79 @@
-// AI Email Writer — drafts follow-up emails using SFDC + Gmail + Calendar context
+// AI Email Writer — pulls full email bodies + Chorus calls, uses Jake's actual voice
 import { getAccessToken } from "./google-auth.js";
 
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
   try {
-    const { oppId, oppName, accountName, contactName, contactEmail, context: userContext, tone } = await req.json();
+    const { action, tone, to, subject: inputSubject, context: userContext } = await req.json();
 
-    if (!oppId || !contactName || !contactEmail) {
-      return Response.json({ error: "Missing required fields: oppId, contactName, contactEmail" }, { status: 400 });
-    }
+    const contactName = action?.contact || to || "";
+    const accountName = action?.subtitle?.split("·")[0]?.trim() || "";
+    const oppName = action?.title || "";
+    const selectedTone = ["professional", "casual", "urgent", "breakup"].includes(tone) ? tone : "professional";
+    const oppId = action?.id?.startsWith("opp-") ? action.id.replace("opp-", "") : null;
 
-    const validTones = ["professional", "casual", "urgent", "breakup"];
-    const selectedTone = validTones.includes(tone) ? tone : "professional";
+    // ── 1. Pull full email thread bodies from Gmail ───────────
+    let emailContext = "";
+    let emailBodies = [];
+    try {
+      const gtoken = await getAccessToken();
 
-    // ── 1. Gather SFDC context ──────────────────────────────────
-    let sfdcContext = "";
+      // Search by contact name and account name
+      const searchTerms = [contactName, accountName].filter(t => t && t !== "—" && t.length > 2);
+      const searchQuery = searchTerms.map(t => `"${t}"`).join(" OR ");
+
+      if (searchQuery) {
+        const gmailRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q=${encodeURIComponent(searchQuery)}`,
+          { headers: { Authorization: `Bearer ${gtoken}` } }
+        );
+        const gmailData = await gmailRes.json();
+
+        if (gmailData.messages?.length) {
+          // Fetch full message content (not just snippets)
+          const msgs = await Promise.all(
+            gmailData.messages.slice(0, 8).map(async m => {
+              const res = await fetch(
+                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
+                { headers: { Authorization: `Bearer ${gtoken}` } }
+              );
+              if (!res.ok) return null;
+              const msg = await res.json();
+              const headers = {};
+              (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
+
+              // Extract plain text body
+              const body = extractBody(msg.payload);
+
+              return {
+                from: headers.from || "",
+                to: headers.to || "",
+                subject: headers.subject || "",
+                date: headers.date || "",
+                body: body.slice(0, 2000), // Cap per message
+              };
+            })
+          );
+
+          const validMsgs = msgs.filter(Boolean);
+          if (validMsgs.length > 0) {
+            emailContext += `\n## Email Thread History\n`;
+            validMsgs.forEach(m => {
+              emailContext += `\n### [${m.date}] ${m.subject}\nFrom: ${m.from}\nTo: ${m.to}\n\n${m.body}\n---\n`;
+              emailBodies.push(m);
+            });
+          }
+        }
+      }
+    } catch { /* Gmail unavailable */ }
+
+    // ── 2. Pull Chorus call context from SFDC Events ──────────
+    let callContext = "";
     const cookieHeader = req.headers.get("cookie") || "";
     const sfdcMatch = cookieHeader.match(/sfdc_tokens=([^;]+)/);
 
+    let sfdcContext = "";
     if (sfdcMatch) {
       let tokens;
       try { tokens = JSON.parse(decodeURIComponent(sfdcMatch[1])); } catch { tokens = null; }
@@ -34,143 +89,100 @@ export default async (req) => {
           return data.records || [];
         };
 
-        const [oppDetails, activities, contacts] = await Promise.all([
-          sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Description, NextStep, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE Id = '${oppId}' LIMIT 1`),
-          sfdcQuery(`SELECT Subject, Description, Status, CreatedDate, Who.Name FROM Task WHERE WhatId = '${oppId}' ORDER BY CreatedDate DESC LIMIT 10`),
-          sfdcQuery(`SELECT Id, Name, Title, Email FROM Contact WHERE AccountId IN (SELECT AccountId FROM Opportunity WHERE Id = '${oppId}') LIMIT 20`),
-        ]);
-
-        if (oppDetails.length > 0) {
-          const o = oppDetails[0];
-          sfdcContext += `\n## Opportunity Details\n`;
-          sfdcContext += `- Name: ${o.Name}\n- Account: ${o.Account?.Name || "—"}\n- Stage: ${o.StageName}\n- Amount: $${o.Amount || 0}\n- Close Date: ${o.CloseDate || "—"}\n- Next Step: ${o.NextStep || "—"}\n- Description: ${o.Description || "—"}\n- Last Activity: ${o.LastActivityDate || "—"}\n`;
+        // Opp details if we have an opp ID
+        if (oppId) {
+          const oppDetails = await sfdcQuery(
+            `SELECT Name, Account.Name, Amount, StageName, CloseDate, NextStep, Group_Forecast_Category__c FROM Opportunity WHERE Id = '${oppId}' LIMIT 1`
+          );
+          if (oppDetails.length) {
+            const o = oppDetails[0];
+            sfdcContext += `\n## Deal Details\n- ${o.Name}\n- Account: ${o.Account?.Name || "—"}\n- Stage: ${o.StageName} | Forecast: ${o.Group_Forecast_Category__c || "—"}\n- Amount: $${o.Amount || 0} | Close: ${o.CloseDate || "—"}\n- Next Step: ${o.NextStep || "—"}\n`;
+          }
         }
 
-        if (activities.length > 0) {
-          sfdcContext += `\n## Recent Activities on this Deal\n`;
-          activities.forEach(a => {
-            sfdcContext += `- [${a.CreatedDate?.split("T")[0] || "—"}] ${a.Subject} (${a.Status}) — ${a.Who?.Name || "—"}: ${(a.Description || "").slice(0, 200)}\n`;
-          });
-        }
-
-        if (contacts.length > 0) {
-          sfdcContext += `\n## Contacts on Account\n`;
-          contacts.forEach(c => {
-            sfdcContext += `- ${c.Name} — ${c.Title || "—"} (${c.Email || "—"})\n`;
-          });
+        // Chorus calls mentioning account
+        if (accountName && accountName !== "—") {
+          const chorusCalls = await sfdcQuery(
+            `SELECT Subject, StartDateTime, Who.Name, What.Name FROM Event WHERE Subject LIKE 'Chorus%' AND What.Name LIKE '%${accountName.replace(/'/g, "\\'")}%' ORDER BY StartDateTime DESC LIMIT 5`
+          );
+          if (chorusCalls.length) {
+            callContext += `\n## Recent Calls (Chorus)\n`;
+            chorusCalls.forEach(c => {
+              callContext += `- [${c.StartDateTime?.split("T")[0]}] ${c.Subject?.replace("Chorus - ", "")} with ${c.Who?.Name || "—"}\n`;
+            });
+          }
         }
       }
     }
 
-    // ── 2. Gather Gmail thread context ──────────────────────────
-    let emailContext = "";
-    try {
-      const gtoken = await getAccessToken();
-      const searchQuery = `from:${contactEmail} OR to:${contactEmail}`;
-      const gmailRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${encodeURIComponent(searchQuery)}`,
-        { headers: { Authorization: `Bearer ${gtoken}` } }
-      );
-      const gmailData = await gmailRes.json();
-
-      if (gmailData.messages?.length) {
-        const msgs = await Promise.all(
-          gmailData.messages.slice(0, 5).map(async m => {
-            const res = await fetch(
-              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
-              { headers: { Authorization: `Bearer ${gtoken}` } }
-            );
-            if (!res.ok) return null;
-            const msg = await res.json();
-            const headers = {};
-            (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
-            const snippet = msg.snippet || "";
-            return { from: headers.from, to: headers.to, subject: headers.subject, date: headers.date, snippet };
-          })
-        );
-
-        const validMsgs = msgs.filter(Boolean);
-        if (validMsgs.length > 0) {
-          emailContext += `\n## Recent Email Threads with ${contactName}\n`;
-          validMsgs.forEach(m => {
-            emailContext += `- [${m.date || "—"}] From: ${m.from || "—"} | Subject: ${m.subject || "—"}\n  Preview: ${m.snippet?.slice(0, 300)}\n`;
-          });
-        }
-      }
-    } catch (e) {
-      emailContext += `\n[Gmail data unavailable: ${e.message}]\n`;
-    }
-
-    // ── 3. Gather Calendar context ──────────────────────────────
-    let calendarContext = "";
+    // ── 3. Pull upcoming Calendar meetings ────────────────────
+    let calContext = "";
     try {
       const gtoken = await getAccessToken();
       const now = new Date();
-      const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
       const future14 = new Date(now.getTime() + 14 * 86400000).toISOString();
 
-      const calRes = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
-        `timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(future14)}` +
-        `&maxResults=50&singleEvents=true&orderBy=startTime` +
-        `&q=${encodeURIComponent(accountName || "")}`,
-        { headers: { Authorization: `Bearer ${gtoken}` } }
-      );
-      const calData = await calRes.json();
-
-      const relevantEvents = (calData.items || []).filter(e => {
-        const summary = (e.summary || "").toLowerCase();
-        const acct = (accountName || "").toLowerCase();
-        const contact = (contactName || "").toLowerCase();
-        return (acct && summary.includes(acct)) ||
-               (contact && summary.includes(contact)) ||
-               (e.attendees || []).some(a =>
-                 (a.email || "").toLowerCase() === (contactEmail || "").toLowerCase()
-               );
-      });
-
-      if (relevantEvents.length > 0) {
-        calendarContext += `\n## Meetings with ${accountName || contactName}\n`;
-        relevantEvents.forEach(e => {
-          const start = e.start?.dateTime || e.start?.date || "—";
-          const isPast = new Date(start) < now;
-          calendarContext += `- [${isPast ? "Past" : "Upcoming"}] ${start.split("T")[0]} — ${e.summary}\n`;
-        });
+      if (accountName && accountName !== "—") {
+        const calRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+          `timeMin=${encodeURIComponent(now.toISOString())}&timeMax=${encodeURIComponent(future14)}` +
+          `&maxResults=10&singleEvents=true&orderBy=startTime&q=${encodeURIComponent(accountName)}`,
+          { headers: { Authorization: `Bearer ${gtoken}` } }
+        );
+        const calData = await calRes.json();
+        if (calData.items?.length) {
+          calContext += `\n## Upcoming Meetings\n`;
+          calData.items.forEach(e => {
+            calContext += `- ${e.start?.dateTime?.split("T")[0] || e.start?.date} — ${e.summary}\n`;
+          });
+        }
       }
-    } catch (e) {
-      calendarContext += `\n[Calendar data unavailable: ${e.message}]\n`;
-    }
+    } catch { /* Calendar unavailable */ }
 
-    // ── 4. Build prompt and call Claude ─────────────────────────
+    // ── 4. Build prompt using Jake's actual email voice ────────
     const toneInstructions = {
-      professional: "Write in a professional, warm but business-focused tone. Be direct and value-driven.",
-      casual: "Write in a casual, friendly tone. Keep it light but still purposeful. Use contractions.",
-      urgent: "Write with urgency. Convey time sensitivity clearly but without being aggressive. Reference deadlines or closing timelines.",
-      breakup: "This is a breakup email. The prospect has gone silent. Be respectful but clearly signal this is the final outreach unless they respond. Keep it very short (3-4 sentences max).",
+      professional: "Professional, warm but business-focused. Be direct and value-driven.",
+      casual: "Casual, friendly. Keep it light but still purposeful. Use contractions.",
+      urgent: "Convey time sensitivity clearly. Reference deadlines or closing timelines.",
+      breakup: "Breakup email — prospect has gone silent. Respectful but clearly final outreach. 3-4 sentences max.",
     };
 
-    const fullContext = [sfdcContext, emailContext, calendarContext].filter(Boolean).join("\n");
+    const fullContext = [sfdcContext, emailContext, callContext, calContext].filter(Boolean).join("\n");
 
-    const systemPrompt = `You are Jake Dunlap's AI email assistant. Jake is CEO of Skaled Consulting, a sales consulting firm. Write emails in his voice — direct, concise, value-driven. No fluff.
+    // Using Jake's actual email prompt from his meeting prep build
+    const systemPrompt = `You are writing a follow-up email from Jake Dunlap, CEO of Skaled Consulting.
 
-Today's date: ${new Date().toISOString().split("T")[0]}
+Write a clean, short, professional follow-up email. Do not over-produce it. Do not add flair, catchphrases, or personality flourishes. Write it like a busy CEO dashing off a clear, warm, specific note.
+
+Structure:
+1. One-line opener (personal if context exists, otherwise just "Hey [Name] —")
+2. Reference the SPECIFIC context from prior emails or calls below — what was discussed, what they asked about, what was promised
+3. 2-4 bullets reflecting their priorities or next steps. Frame forward — goals, not problems.
+4. Clear next step with a specific ask
+5. Close with "Jake"
+
+Rules:
+- Under 200 words for simple follow-ups. Under 300 for complex ones.
+- No catchphrases. No forced warmth. No "just following up" or "circling back."
+- No negative descriptions of their team or org.
+- No hedging. Say what you will do and by when.
+- Reference SPECIFIC details from the email thread or call history below to show genuine context
+- The email should read like Jake typed it in 3 minutes because he already knows what to say
+
+Today: ${new Date().toISOString().split("T")[0]}
 
 ${fullContext}
 
-${userContext ? `\nAdditional context from Jake: ${userContext}` : ""}`;
+${userContext ? `\nJake's notes: ${userContext}` : ""}`;
 
-    const userPrompt = `Draft a follow-up email to ${contactName} (${contactEmail}) regarding the ${oppName || "deal"} opportunity with ${accountName || "their company"}.
+    const userPrompt = `Draft a follow-up email to ${contactName} regarding ${oppName || accountName || "our conversation"}.
 
 Tone: ${selectedTone} — ${toneInstructions[selectedTone]}
 
-Requirements:
-- Write a clear, compelling subject line
-- Reference specific prior interactions if available from the email/meeting/activity history above
-- Keep it concise (under 200 words for the body)
-- End with a clear call to action
-- Do NOT include a signature (Jake's sig is added automatically)
-- Return your response as JSON with exactly these fields: { "subject": "...", "body": "..." }
-- The body should be plain text with line breaks (\\n), not HTML`;
+IMPORTANT: Use the actual email thread content and call history above to write a contextually relevant response. Reference specific things they said or discussed.
+
+Return JSON: { "subject": "...", "body": "..." }
+Body should be plain text with \\n line breaks, not HTML. Do not include a signature.`;
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -195,7 +207,7 @@ Requirements:
     const claudeData = await claudeRes.json();
     const rawText = claudeData.content?.[0]?.text || "";
 
-    // Parse the JSON from Claude's response
+    // Parse JSON response
     let subject = "";
     let body = "";
     try {
@@ -215,13 +227,39 @@ Requirements:
 
     const contextSources = [];
     if (sfdcContext) contextSources.push("salesforce");
-    if (emailContext) contextSources.push("gmail");
-    if (calendarContext) contextSources.push("calendar");
+    if (emailContext) contextSources.push("gmail (" + emailBodies.length + " emails)");
+    if (callContext) contextSources.push("chorus");
+    if (calContext) contextSources.push("calendar");
 
     return Response.json({ subject, body, context_used: contextSources });
   } catch (e) {
     return Response.json({ error: e.message }, { status: 500 });
   }
 };
+
+// Extract plain text body from Gmail message payload (same approach as meeting prep build)
+function extractBody(payload) {
+  if (!payload) return "";
+
+  if (payload.mimeType === "text/plain") {
+    const data = payload.body?.data || "";
+    if (data) return atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+  }
+
+  const parts = payload.parts || [];
+  for (const part of parts) {
+    if (part.mimeType === "text/plain") {
+      const data = part.body?.data || "";
+      if (data) return atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+    }
+  }
+
+  for (const part of parts) {
+    const result = extractBody(part);
+    if (result) return result;
+  }
+
+  return "";
+}
 
 export const config = { path: "/.netlify/functions/ai-email-writer" };
