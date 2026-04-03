@@ -76,7 +76,7 @@ const styles = {
   },
 };
 
-export default function DailyBrief({ onClose }) {
+export default function DailyBrief({ onClose, onStart }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -163,7 +163,7 @@ export default function DailyBrief({ onClose }) {
                 </div>
               ))}
 
-              <button style={styles.btn("#10B981")} onClick={onClose}>
+              <button style={styles.btn("#10B981")} onClick={onStart || onClose}>
                 Start My Day
               </button>
             </div>

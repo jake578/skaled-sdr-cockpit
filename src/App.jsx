@@ -1649,7 +1649,12 @@ export default function App() {
       )}
 
       {showDailyBrief && (
-        <DailyBrief onClose={() => setShowDailyBrief(false)} />
+        <DailyBrief onClose={() => setShowDailyBrief(false)} onStart={() => {
+          setShowDailyBrief(false);
+          setView("actions");
+          setActionQueue("external");
+          setOppEdits(d => ({ ...d, priorityFilter: "critical" }));
+        }} />
       )}
 
       {showEADelegate && (
