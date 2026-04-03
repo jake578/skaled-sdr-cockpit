@@ -211,7 +211,7 @@ export default async (req) => {
         const nextWeekStr = new Date(now.getTime() + 7 * 86400000).toISOString().split("T")[0];
 
         const pastDueOpps = await sfdcQuery(
-          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 50`
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 50`
         );
 
         pastDueOpps.forEach(o => {
@@ -232,7 +232,7 @@ export default async (req) => {
         });
 
         const closingNextWeek = await sfdcQuery(
-          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND CloseDate >= ${todayStr} AND CloseDate <= ${nextWeekStr} ORDER BY CloseDate ASC LIMIT 20`
+          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate >= ${todayStr} AND CloseDate <= ${nextWeekStr} ORDER BY CloseDate ASC LIMIT 20`
         );
 
         closingNextWeek.forEach(o => {

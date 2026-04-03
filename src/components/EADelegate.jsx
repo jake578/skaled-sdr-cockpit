@@ -70,14 +70,24 @@ const PRIORITIES = [
   { key: "normal", label: "Normal", color: "#3B82F6" },
 ];
 
+const TEAM = [
+  { name: "Wendy Gaskill", email: "wendy@skaled.com", role: "Chief of Staff" },
+];
+
 export default function EADelegate({ action, onClose, onDelegated }) {
+  const [delegateTo, setDelegateTo] = useState("wendy@skaled.com");
+  const [customEmail, setCustomEmail] = useState("");
   const [priority, setPriority] = useState("normal");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
 
+  const targetEmail = delegateTo === "custom" ? customEmail : delegateTo;
+  const targetName = TEAM.find(t => t.email === delegateTo)?.name || customEmail;
+
   const handleSend = async () => {
+    if (!targetEmail) return;
     setSending(true);
     try {
       const res = await fetch("/.netlify/functions/ea-delegate", {
@@ -90,6 +100,7 @@ export default function EADelegate({ action, onClose, onDelegated }) {
           dueDate,
           notes,
           actionId: action?.id,
+          eaEmail: targetEmail,
         }),
       });
       const data = await res.json();
@@ -110,7 +121,7 @@ export default function EADelegate({ action, onClose, onDelegated }) {
           <div style={styles.success}>
             <div style={styles.successIcon}>&#x2713;</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9", marginBottom: 4 }}>
-              Delegated to Wendy
+              Delegated to {targetName}
             </div>
             <div style={{ fontSize: 13, color: "#94A3B8", marginBottom: 20 }}>
               {action?.title}
@@ -128,7 +139,7 @@ export default function EADelegate({ action, onClose, onDelegated }) {
         <div style={styles.header}>
           <div>
             <div style={styles.title}>Delegate to EA</div>
-            <div style={styles.subtitle}>Send to Wendy for handling</div>
+            <div style={styles.subtitle}>Delegate this action</div>
           </div>
           <button style={styles.closeBtn} onClick={onClose}>x</button>
         </div>
@@ -141,6 +152,29 @@ export default function EADelegate({ action, onClose, onDelegated }) {
           <div style={{ fontSize: 12, color: "#94A3B8" }}>
             {action?.subtitle || action?.suggestedAction}
           </div>
+        </div>
+
+        {/* Delegate to */}
+        <div style={styles.field}>
+          <div style={styles.label}>Delegate to</div>
+          <select
+            style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 6, padding: "10px 12px", color: "#E2E8F0", fontSize: 13 }}
+            value={delegateTo}
+            onChange={e => setDelegateTo(e.target.value)}
+          >
+            {TEAM.map(t => (
+              <option key={t.email} value={t.email}>{t.name} — {t.role}</option>
+            ))}
+            <option value="custom">Other (enter email)</option>
+          </select>
+          {delegateTo === "custom" && (
+            <input
+              style={{ width: "100%", background: "#1E293B", border: "1px solid #334155", borderRadius: 6, padding: "10px 12px", color: "#E2E8F0", fontSize: 13, marginTop: 6 }}
+              placeholder="Email address..."
+              value={customEmail}
+              onChange={e => setCustomEmail(e.target.value)}
+            />
+          )}
         </div>
 
         {/* Priority */}
@@ -188,7 +222,7 @@ export default function EADelegate({ action, onClose, onDelegated }) {
             disabled={sending}
             onClick={handleSend}
           >
-            {sending ? "Sending..." : "Send to Wendy"}
+            {sending ? "Sending..." : `Send to ${targetName.split(" ")[0]}`}
           </button>
           <button style={styles.btn("#334155")} onClick={onClose}>Cancel</button>
         </div>
