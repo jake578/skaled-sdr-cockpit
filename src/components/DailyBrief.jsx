@@ -83,14 +83,17 @@ export default function DailyBrief({ onClose }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch("/.netlify/functions/ai-prioritize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    })
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setError("Failed to generate briefing"); setLoading(false); });
+    fetch("/.netlify/functions/ai-prioritize")
+      .then(r => {
+        if (!r.ok) throw new Error(`Status ${r.status}`);
+        return r.json();
+      })
+      .then(d => {
+        if (d.error) { setError(d.error); setLoading(false); return; }
+        setData(d);
+        setLoading(false);
+      })
+      .catch(e => { setError("Failed to generate briefing: " + e.message); setLoading(false); });
   }, []);
 
   const today = new Date().toLocaleDateString("en-US", {
