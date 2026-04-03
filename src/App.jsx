@@ -821,7 +821,13 @@ export default function App() {
                         <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate(action)}>Delegate</button>
                         {action.id?.startsWith("opp-") && (
                           <>
-                            <button style={s.btn("#F59E0B")} onClick={() => setEditingOpp(editingOpp === action.id ? null : action.id)}>
+                            <button style={s.btn("#F59E0B")} onClick={() => {
+                              if (editingOpp === action.id) { setEditingOpp(null); } else {
+                                const opp = displayOpps.find(o => o.id === action.id.replace("opp-", ""));
+                                setOppEdits(opp ? { StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", Group_Forecast_Category__c: opp.forecastCategory || "" } : {});
+                                setEditingOpp(action.id);
+                              }
+                            }}>
                               {editingOpp === action.id ? "Close Edit" : "Update Opp"}
                             </button>
                             <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: action.id.replace("opp-", ""), oppName: action.title })}>
@@ -1235,7 +1241,12 @@ export default function App() {
                       <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: opp.id, oppName: opp.name })}>Inspect</button>
                       <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `Follow up on ${opp.name}. Next step: ${opp.nextStep}` })}>Delegate</button>
                       {liveOpps && (
-                        <button style={s.btn("#F59E0B")} onClick={() => { setEditingOpp(editingOpp === opp.id ? null : opp.id); setOppEdits({}); }}>
+                        <button style={s.btn("#F59E0B")} onClick={() => {
+                          if (editingOpp === opp.id) { setEditingOpp(null); } else {
+                            setOppEdits({ StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", NextStep: opp.nextStep || "", Group_Forecast_Category__c: opp.forecastCategory || "" });
+                            setEditingOpp(opp.id);
+                          }
+                        }}>
                           {editingOpp === opp.id ? "Close" : "Edit"}
                         </button>
                       )}
