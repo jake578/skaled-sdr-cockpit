@@ -79,55 +79,129 @@ export default async (req) => {
     });
 
     // ── 2. Gmail: unanswered inbound (last 7 days) ───────────
+    // ── 2. Gmail: AI-classified unread emails ──────────────────
     const inboxRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=30&q=in:inbox is:unread newer_than:7d -from:skaled.com -category:promotions -category:social -category:updates -category:forums`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q=in:inbox is:unread newer_than:7d -from:skaled.com -category:promotions -category:social -category:updates -category:forums`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const inboxData = await inboxRes.json();
 
-    const msgDetails = await Promise.all(
-      (inboxData.messages || []).slice(0, 20).map(async m => {
+    // Pull FULL email bodies for classification
+    const rawEmails = [];
+    for (const m of (inboxData.messages || []).slice(0, 10)) {
+      try {
         const res = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (!res.ok) return null;
+        if (!res.ok) continue;
         const msg = await res.json();
         const headers = {};
         (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
-        return { id: m.id, ...headers };
-      })
-    );
 
-    msgDetails.filter(Boolean).forEach(msg => {
-      const from = msg.from || "";
-      const nameMatch = from.match(/^([^<]+)/);
-      const contactName = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : from;
-      const emailAddr = from.toLowerCase();
+        const from = headers.from || "";
+        const emailAddr = from.toLowerCase();
+        if (emailAddr.includes("noreply") || emailAddr.includes("no-reply") || emailAddr.includes("notifications") || emailAddr.includes("mailer-daemon") || emailAddr.includes("calendar-notification")) continue;
 
-      // Skip automated/noreply
-      if (emailAddr.includes("noreply") || emailAddr.includes("no-reply") ||
-          emailAddr.includes("notifications") || emailAddr.includes("mailer-daemon")) return;
+        // Extract body
+        let body = msg.snippet || "";
+        const extractBody = (payload) => {
+          if (!payload) return "";
+          if (payload.mimeType === "text/plain" && payload.body?.data) {
+            try { return atob(payload.body.data.replace(/-/g, "+").replace(/_/g, "/")); } catch { return ""; }
+          }
+          for (const part of (payload.parts || [])) { const r = extractBody(part); if (r) return r; }
+          return "";
+        };
+        const fullBody = extractBody(msg.payload) || body;
 
-      const dateStr = msg.date ? new Date(msg.date).toISOString().split("T")[0] : "—";
-      const isToday = dateStr === now.toISOString().split("T")[0];
+        rawEmails.push({
+          id: m.id,
+          from,
+          subject: headers.subject || "",
+          date: headers.date || "",
+          body: fullBody.slice(0, 500), // Cap for token management
+          snippet: msg.snippet || "",
+        });
+      } catch {}
+    }
 
-      const action = {
-        id: `gmail-${msg.id}`,
-        type: "email",
-        priority: isToday ? "critical" : "high",
-        title: `Reply to ${contactName}`,
-        subtitle: msg.subject || "No subject",
-        channel: "email",
-        dueTime: isToday ? "Today" : dateStr,
-        suggestedAction: `Unread email from ${contactName}: "${msg.subject}". Review and respond.`,
-        contact: contactName,
-      };
+    // AI classify all emails in one batch call
+    if (rawEmails.length > 0) {
+      try {
+        const emailSummary = rawEmails.map((e, i) =>
+          `${i}. From: ${e.from}\nSubject: ${e.subject}\nBody: ${e.body.slice(0, 300)}`
+        ).join("\n---\n");
 
-      // Simple heuristic: known client domains = internal, otherwise external
-      // For now, treat all external emails as external actions
-      actions.external.push(action);
-    });
+        const classifyRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514", max_tokens: 1024,
+            system: `You classify emails for Jake Dunlap, CEO of Skaled Consulting. For each email, determine if Jake PERSONALLY needs to respond or take action.
+
+NEEDS_ACTION (Critical): Someone is asking Jake a direct question, requesting a meeting, making a decision that needs his input, a prospect/client reaching out, a deal-related ask, someone senior reaching out
+FYI_ONLY (Skip): Newsletters, automated updates, FYI forwards, CC'd on threads, status updates that don't need response, calendar confirmations, receipts, shipping notifications
+CAN_WAIT (Medium): Team updates that might need response later, non-urgent internal asks, informational emails from known contacts
+
+Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself must respond.`,
+            messages: [{ role: "user", content: `Classify each email. Return JSON array: [{ "index": 0, "classification": "NEEDS_ACTION/FYI_ONLY/CAN_WAIT", "reason": "brief reason" }]\n\n${emailSummary}` }],
+          }),
+        });
+
+        if (classifyRes.ok) {
+          const data = await classifyRes.json();
+          const raw = data.content?.[0]?.text || "";
+          let classifications = [];
+          try { const match = raw.match(/\[[\s\S]*\]/); if (match) classifications = JSON.parse(match[0]); } catch {}
+
+          rawEmails.forEach((msg, i) => {
+            const cls = classifications.find(c => c.index === i);
+            const classification = cls?.classification || "CAN_WAIT";
+            if (classification === "FYI_ONLY") return; // Skip entirely
+
+            const nameMatch = msg.from.match(/^([^<]+)/);
+            const contactName = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : msg.from;
+            const dateStr = msg.date ? new Date(msg.date).toISOString().split("T")[0] : "—";
+            const isToday = dateStr === now.toISOString().split("T")[0];
+
+            actions.external.push({
+              id: `gmail-${msg.id}`,
+              type: "email",
+              priority: classification === "NEEDS_ACTION" ? (isToday ? "critical" : "high") : "medium",
+              title: `Reply to ${contactName}`,
+              subtitle: msg.subject || "No subject",
+              channel: "email",
+              dueTime: isToday ? "Today" : dateStr,
+              suggestedAction: cls?.reason ? `${cls.reason}. "${msg.subject}"` : `Unread from ${contactName}: "${msg.subject}"`,
+              contact: contactName,
+            });
+          });
+        } else {
+          // Fallback: add all without classification
+          rawEmails.forEach(msg => {
+            const nameMatch = msg.from.match(/^([^<]+)/);
+            const contactName = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : msg.from;
+            actions.external.push({
+              id: `gmail-${msg.id}`, type: "email", priority: "medium",
+              title: `Reply to ${contactName}`, subtitle: msg.subject || "",
+              channel: "email", dueTime: "—", suggestedAction: `Unread: "${msg.subject}"`, contact: contactName,
+            });
+          });
+        }
+      } catch {
+        // If AI fails, add all as medium
+        rawEmails.forEach(msg => {
+          const nameMatch = msg.from.match(/^([^<]+)/);
+          const contactName = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : msg.from;
+          actions.external.push({
+            id: `gmail-${msg.id}`, type: "email", priority: "medium",
+            title: `Reply to ${contactName}`, subtitle: msg.subject || "",
+            channel: "email", dueTime: "—", suggestedAction: `Unread: "${msg.subject}"`, contact: contactName,
+          });
+        });
+      }
+    }
 
     // ── 3. SFDC: stalled opps + new leads ────────────────────
     // Parse SFDC tokens from cookie
