@@ -17,6 +17,11 @@ import ClientHealth from "./components/ClientHealth";
 import RevenueForecast from "./components/RevenueForecast";
 import PipelineDetail from "./components/PipelineDetail";
 import DealScore from "./components/DealScore";
+import Account360 from "./components/Account360";
+import KanbanBoard from "./components/KanbanBoard";
+import GlobalSearch from "./components/GlobalSearch";
+import KeyboardShortcuts from "./components/KeyboardShortcuts";
+import EnhancedChat from "./components/EnhancedChat";
 import PostMeeting from "./components/PostMeeting";
 import CashFlow from "./components/CashFlow";
 import ExpansionSignals from "./components/ExpansionSignals";
@@ -428,7 +433,7 @@ export default function App() {
       if (e.key === "1") setView("actions");
       if (e.key === "2") setView("dashboard");
       if (e.key === "3") setView("pipeline");
-      if (e.key === "/" && !e.metaKey) { e.preventDefault(); document.getElementById("search-input")?.focus(); }
+      if (e.key === "/" && !e.metaKey) { e.preventDefault(); setShowGlobalSearch(true); }
       if (e.key === "c" || e.key === "C") setChatOpen(prev => !prev);
       if (e.key === "b") setShowDailyBrief(true);
       if (e.key === "w") setShowWeeklyDigest(true);
@@ -1822,6 +1827,25 @@ export default function App() {
           onInspectOpp={(data) => { setShowPipelineDetail(false); setShowDealInspector(data); }}
         />
       )}
+
+      {showAccount360 && (
+        <Account360 accountId={showAccount360.accountId} accountName={showAccount360.accountName} onClose={() => setShowAccount360(null)}
+          onScoreDeal={(d) => { setShowAccount360(null); setShowDealScore(d); }}
+          onEmailDeal={(a) => { setShowAccount360(null); setShowEmailComposer({ action: a, mode: "ai" }); }}
+          onDeepIntel={(d) => { setShowAccount360(null); setShowDeepIntel(d); }}
+        />
+      )}
+
+      {showGlobalSearch && (
+        <GlobalSearch onClose={() => setShowGlobalSearch(false)} onNavigate={(item) => {
+          setShowGlobalSearch(false);
+          if (item.type === "opportunity") { setView("pipeline"); setPipelineTab("opps"); }
+          else if (item.type === "contact" || item.type === "lead") { setView("pipeline"); setPipelineTab("leads"); }
+          else if (item.type === "account") { setShowAccount360({ accountName: item.name }); }
+        }} />
+      )}
+
+      {showShortcuts && <KeyboardShortcuts onClose={() => setShowShortcuts(false)} />}
 
       {showMissingContacts && (
         <MissingContacts oppId={showMissingContacts.oppId} accountId={showMissingContacts.accountId} accountName={showMissingContacts.accountName} onClose={() => setShowMissingContacts(null)} />
