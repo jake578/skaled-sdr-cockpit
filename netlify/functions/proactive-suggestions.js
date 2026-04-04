@@ -174,6 +174,56 @@ export default async (req) => {
       });
     } catch {}
 
+    // ── PATTERN-BASED: Missing contacts (Gmail people not in SFDC) ──
+    try {
+      const topOpps = opps.filter(o => (o.Amount || 0) >= 10000).slice(0, 8);
+      for (const o of topOpps) {
+        if (!o.AccountId) continue;
+        const sfdcContacts = await sfdcQuery(`SELECT Email FROM Contact WHERE AccountId = '${o.AccountId}' AND Email != null LIMIT 50`);
+        const sfdcEmails = new Set(sfdcContacts.map(c => c.Email.toLowerCase()));
+        const acctName = o.Account?.Name || "";
+        if (acctName.length < 3) continue;
+
+        try {
+          const gtoken = await getAccessToken();
+          const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q="${acctName}" newer_than:60d`, { headers: { Authorization: `Bearer ${gtoken}` } });
+          const data = await res.json();
+          if (!data.messages?.length) continue;
+
+          const gmailPeople = new Set();
+          for (const m of data.messages.slice(0, 5)) {
+            try {
+              const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To`, { headers: { Authorization: `Bearer ${gtoken}` } });
+              if (!r.ok) continue;
+              const msg = await r.json();
+              const addrs = (msg.payload?.headers || []).map(h => h.value).join(", ");
+              const found = addrs.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g) || [];
+              found.forEach(e => {
+                const lower = e.toLowerCase();
+                if (!lower.includes("skaled.com") && !lower.includes("noreply") && !lower.includes("google.com") && !sfdcEmails.has(lower)) gmailPeople.add(lower);
+              });
+            } catch {}
+          }
+
+          if (gmailPeople.size > 0) {
+            suggestions.push({
+              id: `missing-contacts-${o.Id}`,
+              type: "pattern_based",
+              trigger: "missing_contacts",
+              priority: gmailPeople.size >= 3 ? "high" : "medium",
+              score: 60 + gmailPeople.size * 5,
+              title: `${gmailPeople.size} people at ${acctName} not in Salesforce`,
+              description: `${o.Name} · $${(o.Amount || 0).toLocaleString()} · You're emailing ${gmailPeople.size} people who aren't contacts in SFDC`,
+              action: `Add these contacts to Salesforce to improve deal tracking and multi-threading. Use the + Contacts button on this deal.`,
+              oppId: o.Id, amount: o.Amount || 0,
+              actionType: "add_contacts",
+              missingCount: gmailPeople.size,
+            });
+          }
+        } catch {}
+      }
+    } catch {}
+
     // Sort by score descending, then priority
     const priorityOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
     suggestions.sort((a, b) => {

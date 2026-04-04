@@ -226,7 +226,12 @@ export default function DealScore({ oppId, oppName, onClose }) {
                     ))}
                   </div>
                 )}
-                {(!data.contacts || data.contacts.length === 0) && (!data.allContacts || data.allContacts.length === 0) && (
+                {/* Gmail-discovered contacts NOT in SFDC */}
+                {data.gmailContacts?.length > 0 && (
+                  <GmailContacts contacts={data.gmailContacts} oppId={oppId} />
+                )}
+
+                {(!data.contacts || data.contacts.length === 0) && (!data.allContacts || data.allContacts.length === 0) && (!data.gmailContacts || data.gmailContacts.length === 0) && (
                   <div style={{ textAlign: "center", padding: 20, color: "#64748B" }}>No contacts found on this deal or account</div>
                 )}
               </>
@@ -249,6 +254,61 @@ export default function DealScore({ oppId, oppName, onClose }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Sub-component: Gmail contacts with Add to SFDC
+function GmailContacts({ contacts, oppId }) {
+  const [added, setAdded] = useState(new Set());
+  const [adding, setAdding] = useState(null);
+
+  const addContact = async (c) => {
+    setAdding(c.email);
+    try {
+      const nameParts = (c.name || "").split(" ");
+      const firstName = nameParts.slice(0, -1).join(" ") || "";
+      const lastName = nameParts.slice(-1)[0] || c.email.split("@")[0];
+      const res = await fetch("/.netlify/functions/sfdc-create-contact", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstName, lastName, email: c.email, oppId }),
+      });
+      const result = await res.json();
+      if (result.success) setAdded(prev => new Set([...prev, c.email]));
+    } catch {}
+    setAdding(null);
+  };
+
+  const addAll = async () => {
+    for (const c of contacts.filter(c => !added.has(c.email))) await addContact(c);
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#F59E0B", textTransform: "uppercase" }}>Found in Gmail — Not in SFDC ({contacts.length})</div>
+        {contacts.filter(c => !added.has(c.email)).length > 0 && (
+          <button style={{ padding: "3px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, background: "#10B981", color: "#fff" }} onClick={addAll}>
+            Add All ({contacts.filter(c => !added.has(c.email)).length})
+          </button>
+        )}
+      </div>
+      {contacts.map((c, i) => (
+        <div key={i} style={{ background: "#F59E0B10", borderRadius: 4, padding: "6px 10px", marginBottom: 3, display: "flex", justifyContent: "space-between", alignItems: "center", borderLeft: "2px solid #F59E0B" }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#F1F5F9" }}>{c.name || c.email.split("@")[0]}</div>
+            <div style={{ fontSize: 10, color: "#F59E0B" }}>{c.email} · {c.count} email{c.count !== 1 ? "s" : ""}</div>
+          </div>
+          {added.has(c.email) ? (
+            <span style={{ fontSize: 10, color: "#10B981", fontWeight: 600 }}>✓ Added</span>
+          ) : (
+            <button style={{ padding: "3px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, background: "#10B981", color: "#fff", opacity: adding === c.email ? 0.6 : 1 }}
+              disabled={adding === c.email} onClick={() => addContact(c)}>
+              {adding === c.email ? "..." : "Add"}
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
