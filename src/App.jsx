@@ -165,7 +165,11 @@ export default function App() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showPipelineDetail, setShowPipelineDetail] = useState(false);
   const [showDeepIntel, setShowDeepIntel] = useState(null);
-  const [showMissingContacts, setShowMissingContacts] = useState(null); // { oppId, accountId, accountName } // { oppId, oppName, accountName }
+  const [showMissingContacts, setShowMissingContacts] = useState(null);
+  const [showAccount360, setShowAccount360] = useState(null); // { accountId, accountName }
+  const [showKanban, setShowKanban] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false); // { oppId, accountId, accountName } // { oppId, oppName, accountName }
   const [showDealScore, setShowDealScore] = useState(null); // { oppId, oppName }
   const [showPostMeeting, setShowPostMeeting] = useState(null); // { id, subject, account }
   const [showCashFlow, setShowCashFlow] = useState(false);
@@ -326,6 +330,23 @@ export default function App() {
         setActionsLoading(false);
       })
       .catch(() => setActionsLoading(false));
+
+    // Auto-refresh every 5 minutes in background
+    const refreshInterval = setInterval(() => {
+      fetch("/.netlify/functions/daily-actions")
+        .then(r => r.json())
+        .then(data => {
+          if (data.external || data.internal) {
+            setLiveActions(data);
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
+          }
+        }).catch(() => {});
+      fetch("/.netlify/functions/live-metrics")
+        .then(r => r.json())
+        .then(data => { if (!data.error) setLiveMetrics(data); })
+        .catch(() => {});
+    }, 5 * 60 * 1000);
+    return () => clearInterval(refreshInterval);
   }, []);
 
   // Load from blob store on mount
@@ -409,6 +430,13 @@ export default function App() {
       if (e.key === "3") setView("pipeline");
       if (e.key === "/" && !e.metaKey) { e.preventDefault(); document.getElementById("search-input")?.focus(); }
       if (e.key === "c" || e.key === "C") setChatOpen(prev => !prev);
+      if (e.key === "b") setShowDailyBrief(true);
+      if (e.key === "w") setShowWeeklyDigest(true);
+      if (e.key === "f") setShowCashFlow(true);
+      if (e.key === "p") setShowPipelineDetail(true);
+      if (e.key === "n") setShowNewTask(true);
+      if (e.key === "k") setShowKanban(prev => !prev);
+      if (e.key === "?") setShowShortcuts(prev => !prev);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -530,9 +558,20 @@ export default function App() {
           </div>
         </div>
         <div style={s.nav}>
-          {[["actions", "Actions"], ["dashboard", "Dashboard"], ["pipeline", "Pipeline"]].map(([key, label]) => (
-            <button key={key} style={s.navBtn(view === key)} onClick={() => setView(key)}>{label}</button>
-          ))}
+          {[["actions", "Actions"], ["dashboard", "Dashboard"], ["pipeline", "Pipeline"]].map(([key, label]) => {
+            // Badge counts
+            let badge = 0;
+            if (key === "actions" && liveActions) {
+              badge = [...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.dealsAtRisk || [])].filter(a => !isInCooldown(a.id) && (typeof (actionStatuses[a.id]) === "object" ? actionStatuses[a.id]?.status : actionStatuses[a.id]) !== "done").filter(a => a.priority === "critical").length;
+            }
+            if (key === "pipeline" && liveMetrics?.pastDueDeals) badge = liveMetrics.pastDueDeals;
+            return (
+              <button key={key} style={{ ...s.navBtn(view === key), position: "relative" }} onClick={() => setView(key)}>
+                {label}
+                {badge > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{badge}</span>}
+              </button>
+            );
+          })}
         </div>
         <div style={s.searchWrap}>
           <span style={{ position: "absolute", left: 10, color: "#64748B", fontSize: 14, pointerEvents: "none" }}>⌕</span>
@@ -1342,6 +1381,7 @@ export default function App() {
                       <button style={{ padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: "linear-gradient(135deg, #8B5CF6, #EC4899)", color: "#fff" }} onClick={() => setShowDeepIntel({ oppId: opp.id, oppName: opp.name, accountName: opp.account })}>Deep Intel</button>
                       <button style={s.btn("#F59E0B")} onClick={() => setShowRelMap({ accountId: null, accountName: opp.account })}>Relationships</button>
                       <button style={s.btn("#06B6D4")} onClick={() => setShowMissingContacts({ oppId: opp.id, accountName: opp.account })}>+ Contacts</button>
+                      <button style={s.btn("#334155")} onClick={() => setShowAccount360({ accountName: opp.account })}>Account</button>
                       <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `Follow up on ${opp.name}. Next step: ${opp.nextStep}` })}>Delegate</button>
                       {liveOpps && (
                         <button style={s.btn("#F59E0B")} onClick={() => {
