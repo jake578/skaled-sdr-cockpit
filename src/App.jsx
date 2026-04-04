@@ -354,6 +354,34 @@ export default function App() {
     return () => clearInterval(refreshInterval);
   }, []);
 
+  // Lazy AI enrichment — runs after actions load, doesn't block
+  useEffect(() => {
+    if (!liveActions) return;
+    const allActions = [...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.dealsAtRisk || [])].slice(0, 12);
+    if (allActions.length === 0) return;
+
+    fetch("/.netlify/functions/enrich-actions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actions: allActions }),
+    }).then(r => r.json()).then(data => {
+      if (data.enriched?.length) {
+        setLiveActions(prev => {
+          const updated = { ...prev };
+          data.enriched.forEach(e => {
+            const action = allActions[e.index];
+            if (!action || !e.suggestion) return;
+            // Find and update in the correct queue
+            for (const qKey of ["external", "internal", "dealsAtRisk"]) {
+              const match = (updated[qKey] || []).find(a => a.id === action.id);
+              if (match) { match.suggestedAction = e.suggestion; break; }
+            }
+          });
+          return { ...updated };
+        });
+      }
+    }).catch(() => {});
+  }, [liveActions ? "loaded" : "waiting"]);
+
   // Load from blob store on mount
   useEffect(() => {
     (async () => {
@@ -912,16 +940,22 @@ export default function App() {
                         {action.title}
                       </div>
                       <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 4 }}>{action.subtitle}</div>
+                      {/* Always show suggested action (not hidden behind expand) */}
+                      {action.suggestedAction && !done && (
+                        <div style={{ fontSize: 12, color: "#10B981", marginTop: 6, lineHeight: 1.5, background: "#10B98108", padding: "6px 10px", borderRadius: 4, borderLeft: "2px solid #10B98140" }}>
+                          → {action.suggestedAction}
+                        </div>
+                      )}
+                      {/* Show amount prominently if present */}
+                      {action.amount > 0 && (
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#F1F5F9", marginTop: 4 }}>{fmt(action.amount)}</div>
+                      )}
                     </div>
                     <span style={{ color: "#64748B", fontSize: 18, transform: expanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
                   </div>
 
                   {expanded && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #334155", animation: "fadeIn .2s" }} onClick={e => e.stopPropagation()}>
-                      <div style={{ background: "#0F172A", borderRadius: 6, padding: 12, fontSize: 13, color: "#CBD5E1", lineHeight: 1.5, marginBottom: 12 }}>
-                        <div style={{ fontSize: 11, color: "#64748B", marginBottom: 4, fontWeight: 600, textTransform: "uppercase" }}>Suggested Action</div>
-                        {action.suggestedAction}
-                      </div>
 
                       {/* Critical: prompt to auto-draft */}
                       {action.priority === "critical" && status === "pending" && (action.type === "email" || action.type === "follow-up") && (
