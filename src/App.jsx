@@ -153,7 +153,7 @@ export default function App() {
   const [composing, setComposing] = useState(null); // action id being composed
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
   const [editingOpp, setEditingOpp] = useState(null);
-  const [oppEdits, setOppEdits] = useState({});
+  const [oppEdits, setOppEdits] = useState({ priorityFilter: "critical" });
   // Live metrics
   const [liveMetrics, setLiveMetrics] = useState(null);
   // New feature panels

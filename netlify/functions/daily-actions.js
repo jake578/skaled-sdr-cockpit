@@ -115,7 +115,7 @@ export default async (req) => {
       const action = {
         id: `gmail-${msg.id}`,
         type: "email",
-        priority: isToday ? "high" : "medium",
+        priority: isToday ? "critical" : "high",
         title: `Reply to ${contactName}`,
         subtitle: msg.subject || "No subject",
         channel: "email",
@@ -289,14 +289,23 @@ export default async (req) => {
           // Only surface opps that need attention
           if (daysSinceActivity < 7 && daysToClose > 14) return;
 
+          // Priority: Calendar/Gmail signals > SFDC-only
+          const acctName = (o.Account?.Name || "").toLowerCase();
+          const hasRealTouch = !!accountLastTouch[acctName]; // Gmail/Cal/Chorus confirmed
           let priority = "medium";
           let suggestion = "";
-          if (daysToClose <= 7) {
+          if (daysToClose <= 3) {
             priority = "critical";
-            suggestion = `Close date in ${daysToClose} days. Confirm status and next steps.`;
-          } else if (daysSinceActivity >= 14) {
+            suggestion = `Close date in ${daysToClose} days. Confirm this will close or push the date.`;
+          } else if (daysToClose <= 7) {
+            priority = hasRealTouch ? "high" : "critical"; // If no real touch, more urgent
+            suggestion = `Close date in ${daysToClose} days. ${hasRealTouch ? "Review status." : "No recent engagement detected — confirm deal is alive."}`;
+          } else if (daysSinceActivity >= 14 && !hasRealTouch) {
             priority = "high";
-            suggestion = `No activity in ${daysSinceActivity} days (across Gmail, Calendar, Chorus). Re-engage or update pipeline.`;
+            suggestion = `No activity in ${daysSinceActivity}d across Gmail, Calendar, and Chorus. This deal may be dead — re-engage or close.`;
+          } else if (daysSinceActivity >= 14 && hasRealTouch) {
+            priority = "medium";
+            suggestion = `SFDC shows ${daysSinceActivity}d stale but Gmail/Cal has recent touch. Update SFDC or review.`;
           } else {
             suggestion = `Close date: ${o.CloseDate}. Review and advance.`;
           }
