@@ -26,7 +26,7 @@ import BoardReport from "./components/BoardReport";
 import SuggestionCards from "./components/SuggestionCards";
 
 // ── Helpers ────────────────────────────────────────────────────
-const fmt = (n) => "$" + n.toLocaleString();
+const fmt = (n) => "$" + (n || 0).toLocaleString();
 const pct = (n) => n.toFixed(1) + "%";
 const LS_KEY = "skaled-sdr-cockpit";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } };
