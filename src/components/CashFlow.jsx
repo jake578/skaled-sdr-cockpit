@@ -111,7 +111,7 @@ export default function CashFlow({ onClose, onScoreDeal, onInspectDeal, onDeepIn
               </div>
 
               {/* MONTHLY VIEW */}
-              {view === "monthly" && filteredMonthly.map((m, i) => {
+              {view === "monthly" && [...filteredMonthly].reverse().map((m, i) => {
                 const isExpanded = expandedMonth === m.month;
                 const isCurrent = m.month === currentMonth;
                 const pct = (v) => `${Math.max((v / maxTotal) * 100, 0)}%`;
