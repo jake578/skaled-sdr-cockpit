@@ -153,10 +153,10 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [actionQueue, setActionQueue] = useState("external");
   const [liveActions, setLiveActions] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000) return c.data; } catch {} return null;
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data && (Date.now() - c.timestamp) < 60 * 1000) return c.data; } catch {} return null;
   });
   const [actionsLoading, setActionsLoading] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !(c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000); } catch { return true; }
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !(c?.data && (Date.now() - c.timestamp) < 60 * 1000); } catch { return true; }
   });
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
   const [storeLoaded, setStoreLoaded] = useState(false);
@@ -169,7 +169,7 @@ export default function App() {
   const [oppEdits, setOppEdits] = useState({ priorityFilter: "critical" });
   // Live metrics
   const [liveMetrics, setLiveMetrics] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000) return c.data; } catch {} return null;
+    try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data && (Date.now() - c.timestamp) < 60 * 1000) return c.data; } catch {} return null;
   });
   // New feature panels
   const [showEmailComposer, setShowEmailComposer] = useState(null); // { action, mode: "ai"|"manual" }
