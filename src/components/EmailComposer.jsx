@@ -47,24 +47,22 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
   const [interactionCtx, setInteractionCtx] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextExpanded, setContextExpanded] = useState(false);
+  const [dealDocs, setDealDocs] = useState(null);
   const didAutoRun = useRef(false);
 
-  // Fetch full interaction context
+  // Fetch full interaction context + documents
   const fetchContext = useCallback(async () => {
     setContextLoading(true);
+    const contactName = action?.contact || "";
+    const accountName = action?.subtitle?.split("·")[0]?.trim() || "";
     try {
-      const contactName = action?.contact || "";
-      const accountName = action?.subtitle?.split("·")[0]?.trim() || "";
-      const res = await fetch("/.netlify/functions/interaction-context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contactName, accountName }),
-      });
-      const data = await res.json();
-      if (data.summary || data.emails?.length || data.calls?.length || data.meetings?.length) {
-        setInteractionCtx(data);
-      }
-    } catch { /* ignore */ }
+      const [ctxRes, docsRes] = await Promise.all([
+        fetch("/.netlify/functions/interaction-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contactName, accountName }) }).then(r => r.json()).catch(() => null),
+        fetch("/.netlify/functions/deal-documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountName, oppName: action?.title }) }).then(r => r.json()).catch(() => null),
+      ]);
+      if (ctxRes && (ctxRes.summary || ctxRes.emails?.length || ctxRes.calls?.length || ctxRes.meetings?.length)) setInteractionCtx(ctxRes);
+      if (docsRes && !docsRes.error) setDealDocs(docsRes);
+    } catch {}
     setContextLoading(false);
   }, [action]);
 
@@ -212,8 +210,54 @@ export default function EmailComposer({ action, mode: initialMode, onSend, onClo
             </button>
           </div>
         )}
+        {/* Deal documents — Google Docs, Gamma decks */}
+        {dealDocs && (dealDocs.docContents?.length > 0 || dealDocs.gammaDecks?.length > 0 || dealDocs.decks?.length > 0) && (
+          <div style={{ ...s.contextBox, maxHeight: contextExpanded ? 300 : 150 }}>
+            {dealDocs.documentSummary && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#06B6D4", marginBottom: 3, fontWeight: 600, textTransform: "uppercase" }}>Document Summary</div>
+                <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.5 }}>{dealDocs.documentSummary}</div>
+              </div>
+            )}
+            {dealDocs.gammaDecks?.length > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 11, color: "#F59E0B", marginBottom: 3, fontWeight: 600, textTransform: "uppercase" }}>Gamma Decks ({dealDocs.gammaDecks.length})</div>
+                {dealDocs.gammaDecks.map((d, i) => (
+                  <a key={i} href={d.link} target="_blank" rel="noreferrer" style={{ display: "block", background: "#0F172A", borderRadius: 4, padding: "5px 10px", marginBottom: 2, textDecoration: "none", borderLeft: "2px solid #F59E0B" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#F59E0B" }}>{d.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>Shared by {d.sharedBy} · {d.sharedDate}</div>
+                  </a>
+                ))}
+              </div>
+            )}
+            {dealDocs.docContents?.length > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 11, color: "#3B82F6", marginBottom: 3, fontWeight: 600, textTransform: "uppercase" }}>Google Docs ({dealDocs.docContents.length})</div>
+                {dealDocs.docContents.map((d, i) => (
+                  <a key={i} href={d.link} target="_blank" rel="noreferrer" style={{ display: "block", background: "#0F172A", borderRadius: 4, padding: "5px 10px", marginBottom: 2, textDecoration: "none", borderLeft: "2px solid #3B82F6" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#3B82F6" }}>{d.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>{d.wordCount} words · Modified {d.modified}</div>
+                    {contextExpanded && d.preview && <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 2, whiteSpace: "pre-wrap" }}>{d.preview.slice(0, 200)}...</div>}
+                  </a>
+                ))}
+              </div>
+            )}
+            {dealDocs.decks?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, color: "#8B5CF6", marginBottom: 3, fontWeight: 600, textTransform: "uppercase" }}>Presentations ({dealDocs.decks.length})</div>
+                {dealDocs.decks.map((d, i) => (
+                  <a key={i} href={d.link} target="_blank" rel="noreferrer" style={{ display: "block", background: "#0F172A", borderRadius: 4, padding: "5px 10px", marginBottom: 2, textDecoration: "none", borderLeft: "2px solid #8B5CF6" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#8B5CF6" }}>{d.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>Modified {d.modified}</div>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {contextLoading && (
-          <div style={{ ...s.contextBox, textAlign: "center", color: "#64748B" }}>Loading interaction history...</div>
+          <div style={{ ...s.contextBox, textAlign: "center", color: "#64748B" }}>Loading interactions + documents...</div>
         )}
 
         {/* Tone selector (AI mode) */}
