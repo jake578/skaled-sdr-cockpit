@@ -35,17 +35,8 @@ const LS_KEY = "ceo-cockpit-v2";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } };
 const save = (d) => localStorage.setItem(LS_KEY, JSON.stringify(d));
 
-// Clear ALL old data on version change
-const APP_VERSION = "v2.1";
-try {
-  if (localStorage.getItem("cockpit_version") !== APP_VERSION) {
-    localStorage.removeItem("skaled-sdr-cockpit");
-    localStorage.removeItem("cockpit_actions_cache");
-    localStorage.removeItem("cockpit_metrics_cache");
-    localStorage.removeItem("ceo-cockpit-v2");
-    localStorage.setItem("cockpit_version", APP_VERSION);
-  }
-} catch {}
+// Clean up legacy keys only
+try { localStorage.removeItem("skaled-sdr-cockpit"); } catch {}
 
 // ── Toast ──────────────────────────────────────────────────────
 function Toast({ msg, onDone }) {
@@ -153,10 +144,10 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [actionQueue, setActionQueue] = useState("external");
   const [liveActions, setLiveActions] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data && (Date.now() - c.timestamp) < 60 * 1000) return c.data; } catch {} return null;
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data) return c.data; } catch {} return null;
   });
   const [actionsLoading, setActionsLoading] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !(c?.data && (Date.now() - c.timestamp) < 60 * 1000); } catch { return true; }
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !c?.data; } catch { return true; }
   });
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
   const [storeLoaded, setStoreLoaded] = useState(false);
@@ -169,7 +160,7 @@ export default function App() {
   const [oppEdits, setOppEdits] = useState({ priorityFilter: "critical" });
   // Live metrics
   const [liveMetrics, setLiveMetrics] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data && (Date.now() - c.timestamp) < 60 * 1000) return c.data; } catch {} return null;
+    try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data) return c.data; } catch {} return null;
   });
   // New feature panels
   const [showEmailComposer, setShowEmailComposer] = useState(null); // { action, mode: "ai"|"manual" }
@@ -196,7 +187,9 @@ export default function App() {
   const [closedWonOpps, setClosedWonOpps] = useState(null);
 
   // ── Live Data ────────────────────────────────────────────────
-  const [liveOpps, setLiveOpps] = useState(null);
+  const [liveOpps, setLiveOpps] = useState(() => {
+    try { const c = JSON.parse(localStorage.getItem("cockpit_opps_cache")); if (c) return c; } catch {} return null;
+  });
   const [liveActivities, setLiveActivities] = useState(null);
   const [liveAccounts, setLiveAccounts] = useState(null);
   const [liveLeads, setLiveLeads] = useState(null);
@@ -217,15 +210,19 @@ export default function App() {
         sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
         sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
     ]).then(([opps, events, accounts, leads, wonOpps]) => {
-      if (opps && opps.length) setLiveOpps(opps.map(o => ({
-        id: o.Id, name: o.Name, account: o.Account?.Name || "—",
-        contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
-        forecastCategory: o.Group_Forecast_Category__c || "—",
-        probability: o.Probability || 0, closeDate: o.CloseDate || "—",
-        lastActivity: o.LastActivityDate || "—", nextStep: "—",
-        daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
-        source: o.LeadSource || "—",
-      })));
+      if (opps && opps.length) {
+        const mapped = opps.map(o => ({
+          id: o.Id, name: o.Name, account: o.Account?.Name || "—",
+          contact: "—", amount: o.Amount || 0, stage: o.StageName || "—",
+          forecastCategory: o.Group_Forecast_Category__c || "—",
+          probability: o.Probability || 0, closeDate: o.CloseDate || "—",
+          lastActivity: o.LastActivityDate || "—", nextStep: "—",
+          daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
+          source: o.LeadSource || "—",
+        }));
+        setLiveOpps(mapped);
+        try { localStorage.setItem("cockpit_opps_cache", JSON.stringify(mapped)); } catch {}
+      }
 
       // Only use Events (Chorus calls + Calendly meetings) — Task dates are unreliable (SFDC sync date, not actual activity date)
       const allActivities = [];
