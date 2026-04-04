@@ -28,6 +28,15 @@ export default async (req) => {
           subjectLower.includes("focus time") || subjectLower.includes("ooo") ||
           subjectLower.includes("out of office") || subjectLower.includes("reminder")) return;
 
+      // Jenni Weber: skip calendar invites, only show urgent or OOO
+      const organizer = (event.organizer?.email || "").toLowerCase();
+      const isJenniWeber = organizer.includes("jenni") || (event.attendees || []).some(a => (a.email || "").toLowerCase().includes("jenni") && (a.organizer || false));
+      if (isJenniWeber) {
+        const isUrgent = subjectLower.includes("urgent") || subjectLower.includes("asap") || subjectLower.includes("critical");
+        const isOOO = subjectLower.includes("out of") || subjectLower.includes("ooo") || subjectLower.includes("vacation") || subjectLower.includes("travel") || subjectLower.includes("out of town");
+        if (!isUrgent && !isOOO) return; // Skip non-urgent Jenni calendar invites
+      }
+
       const start = event.start?.dateTime || event.start?.date || "";
       const dateStr = start ? start.split("T")[0] : "—";
       const timeStr = event.start?.dateTime
