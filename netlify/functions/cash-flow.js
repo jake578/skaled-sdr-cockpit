@@ -17,10 +17,36 @@ export default async (req) => {
     const qStart = `${now.getFullYear()}-${String(quarter * 3 + 1).padStart(2, "0")}-01`;
     const todayStr = now.toISOString().split("T")[0];
 
-    const [openOpps, closedWon] = await Promise.all([
-      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, CloseDate, StageName, Group_Forecast_Category__c, Probability, LastActivityDate FROM Opportunity WHERE IsClosed = false AND Amount > 0 ORDER BY CloseDate ASC`),
+    const [openOpps, closedWon, allClosedWon] = await Promise.all([
+      sfdcQuery(`SELECT Id, Name, Account.Name, AccountId, Amount, CloseDate, StageName, Group_Forecast_Category__c, Probability, LastActivityDate FROM Opportunity WHERE IsClosed = false AND Amount > 0 ORDER BY CloseDate ASC`),
       sfdcQuery(`SELECT Id, Name, Account.Name, Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= ${qStart} ORDER BY CloseDate DESC`),
+      // Pull last 12 months of closed won to identify recurring vs new deals
+      sfdcQuery(`SELECT AccountId, Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= LAST_N_DAYS:365 ORDER BY CloseDate DESC`),
     ]);
+
+    // Build recurring account map: accountId → [{ amount, closeDate }]
+    const accountHistory = {};
+    allClosedWon.forEach(o => {
+      if (!o.AccountId) return;
+      if (!accountHistory[o.AccountId]) accountHistory[o.AccountId] = [];
+      accountHistory[o.AccountId].push({ amount: o.Amount || 0, month: (o.CloseDate || "").substring(0, 7) });
+    });
+
+    // Determine if a deal is recurring (same account has multiple closed won with similar amounts)
+    const isRecurringDeal = (opp) => {
+      const history = accountHistory[opp.AccountId] || [];
+      if (history.length < 2) return false;
+      // Check if there are 2+ closed won at similar amounts (within 20%)
+      const amt = opp.Amount || 0;
+      const similarCount = history.filter(h => Math.abs(h.amount - amt) / Math.max(amt, 1) < 0.2).length;
+      return similarCount >= 2;
+    };
+
+    // Check if account has ANY prior closed won (first deal = new client)
+    const isFirstDeal = (opp) => {
+      const history = accountHistory[opp.AccountId] || [];
+      return history.length === 0;
+    };
 
     const weights = { "Commit": 0.9, "Best Case": 0.6, "Pipeline": 0.3, "Omitted": 0, "Closed": 1.0 };
 
@@ -60,42 +86,49 @@ export default async (req) => {
         return;
       }
 
-      // Revenue spread: 1-month deals stay in close month
-      // Multi-month deals spread over 2.5 months from close date
-      // Split: 40% month 1, 35% month 2, 25% month 3 (half)
       const oppMonth = o.CloseDate.substring(0, 7);
       const closeMonthIdx = monthly.findIndex(m => m.month === oppMonth);
       if (closeMonthIdx < 0) return;
 
-      // Determine if this is a one-time or multi-month engagement
-      // Heuristic: deals < $15K are likely one-month, larger deals spread
-      const isOneMonth = amount < 15000;
+      const recurring = isRecurringDeal(o);
+      const firstDeal = isFirstDeal(o);
 
-      if (isOneMonth) {
-        // One-month deal: all revenue in close month
+      if (recurring) {
+        // RECURRING: same account, similar amount month over month
+        // Count full amount in close month — this is monthly retainer revenue
         const m = monthly[closeMonthIdx];
-        m.deals.push(deal);
+        m.deals.push({ ...deal, revenueType: "recurring", spreadNote: "Recurring — full amount" });
         if (cat === "Commit") m.committed += weighted;
         else if (cat === "Best Case") m.bestCase += weighted;
         else m.pipeline += weighted;
         m.total += weighted;
-      } else {
-        // Multi-month: spread over 2.5 months (40/35/25 split)
+      } else if (firstDeal) {
+        // NEW CLIENT: first closed won for this account
+        // Spread over 2.5 months (40/35/25)
         const splits = [0.4, 0.35, 0.25];
-        const spreadDeal = { ...deal, spreadNote: "Spread over 2.5 months" };
         for (let s = 0; s < 3; s++) {
           const mIdx = closeMonthIdx + s;
           if (mIdx >= monthly.length) break;
           const m = monthly[mIdx];
           const portion = Math.round(weighted * splits[s]);
-          const rawPortion = Math.round(amount * splits[s]);
-
-          if (s === 0) {
-            m.deals.push({ ...spreadDeal, weighted: portion, spreadAmount: rawPortion, spreadPct: "40%" });
-          } else {
-            m.deals.push({ ...spreadDeal, weighted: portion, spreadAmount: rawPortion, spreadPct: s === 1 ? "35%" : "25%", isSpread: true });
-          }
-
+          const pctLabel = s === 0 ? "40%" : s === 1 ? "35%" : "25%";
+          m.deals.push({ ...deal, weighted: portion, revenueType: "new_client", spreadNote: `New client — ${pctLabel} of total`, spreadPct: pctLabel, isSpread: s > 0 });
+          if (cat === "Commit") m.committed += portion;
+          else if (cat === "Best Case") m.bestCase += portion;
+          else m.pipeline += portion;
+          m.total += portion;
+        }
+      } else {
+        // EXISTING CLIENT, NEW DEAL: has history but different amount (expansion, new project)
+        // Spread over 2.5 months
+        const splits = [0.4, 0.35, 0.25];
+        for (let s = 0; s < 3; s++) {
+          const mIdx = closeMonthIdx + s;
+          if (mIdx >= monthly.length) break;
+          const m = monthly[mIdx];
+          const portion = Math.round(weighted * splits[s]);
+          const pctLabel = s === 0 ? "40%" : s === 1 ? "35%" : "25%";
+          m.deals.push({ ...deal, weighted: portion, revenueType: "new_deal", spreadNote: `New engagement — ${pctLabel} of total`, spreadPct: pctLabel, isSpread: s > 0 });
           if (cat === "Commit") m.committed += portion;
           else if (cat === "Best Case") m.bestCase += portion;
           else m.pipeline += portion;
