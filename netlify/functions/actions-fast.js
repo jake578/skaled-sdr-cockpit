@@ -54,13 +54,14 @@ export default async (req) => {
           channel: "salesforce", dueTime: `Closes in ${daysToClose}d`,
           suggestedAction: `Close date in ${daysToClose} days. Confirm or push.`,
         });
-      } else if (daysSince >= 14) {
+      } else if (daysSince >= 14 && daysSince < 999) {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,
           subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "—"}`,
-          channel: "salesforce", dueTime: `${daysSince}d since activity`,
-          suggestedAction: `No SFDC activity in ${daysSince} days. Checking Gmail/Calendar for real activity...`,
+          channel: "salesforce", dueTime: `${daysSince}d silent`,
+          context: `No logged activity with ${o.Account?.Name || "this account"} in ${daysSince} days. Verifying against Gmail and Calendar...`,
+          suggestedAction: `Re-engage or verify — checking email and calendar for recent touches.`,
         });
       }
     });

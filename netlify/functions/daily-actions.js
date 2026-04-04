@@ -361,53 +361,70 @@ Be VERY strict. 70%+ of emails should be FYI_ONLY. Only NEEDS_ACTION if Jake ign
           return bestDate ? Math.floor((now.getTime() - new Date(bestDate).getTime()) / 86400000) : 999;
         };
 
-        // Stalled/upcoming opps (using REAL activity dates)
+        // Stalled/upcoming opps — only show deals with clear reasons WHY they need attention
         allOpenOpps.forEach(o => {
           const daysSinceActivity = getRealDaysSince(o);
-          const daysToClose = o.CloseDate
-            ? Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000)
-            : 999;
-
-          // Only surface opps that need attention
-          if (daysSinceActivity < 7 && daysToClose > 14) return;
-
-          // Priority: Calendar/Gmail signals > SFDC-only
+          const daysToClose = o.CloseDate ? Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000) : null;
           const acctName = (o.Account?.Name || "").toLowerCase();
-          const hasRealTouch = !!accountLastTouch[acctName]; // Gmail/Cal/Chorus confirmed
+          const hasRealTouch = !!accountLastTouch[acctName];
+          const amt = o.Amount ? "$" + o.Amount.toLocaleString() : null;
+          const acct = o.Account?.Name || "Unknown";
+
+          // Skip deals with no clear reason to surface
+          if (daysSinceActivity < 7 && (daysToClose === null || daysToClose > 14)) return;
+          // Skip if activity data is unknown (999) and close date isn't soon
+          if (daysSinceActivity >= 999 && (daysToClose === null || daysToClose > 7)) return;
+
           let priority = "medium";
-          let suggestion = "";
           let criticalReason = null;
-          if (daysToClose <= 3) {
+          let context = null;
+          let suggestion = "";
+          let dueTime = "";
+
+          if (daysToClose !== null && daysToClose <= 3 && daysToClose >= 0) {
             priority = "critical";
-            criticalReason = `Closes in ${daysToClose} day${daysToClose !== 1 ? "s" : ""} — ${o.Amount ? "$" + o.Amount.toLocaleString() + " at stake" : "needs close date update or commitment"}`;
-            suggestion = `Close date in ${daysToClose} days. Confirm this will close or push the date.`;
-          } else if (daysToClose <= 7 && !hasRealTouch) {
+            criticalReason = amt ? `${amt} closes in ${daysToClose} day${daysToClose !== 1 ? "s" : ""}` : `Deal closes in ${daysToClose} day${daysToClose !== 1 ? "s" : ""}`;
+            context = `${acct} deal is ${daysToClose === 0 ? "due TODAY" : "due in " + daysToClose + " days"}. ${hasRealTouch ? "You've been in touch recently." : "No recent emails or meetings found."} ${o.StageName} stage${amt ? ", " + amt + " on the line" : ""}.`;
+            suggestion = daysToClose === 0 ? "Get verbal confirmation today or push the close date." : "Confirm commitment or push the date before it goes past due.";
+            dueTime = daysToClose === 0 ? "Closes today" : `Closes in ${daysToClose}d`;
+
+          } else if (daysToClose !== null && daysToClose <= 7 && !hasRealTouch) {
             priority = "critical";
-            criticalReason = `Closes in ${daysToClose}d with ZERO recent engagement across email, calendar, or calls`;
-            suggestion = `Close date in ${daysToClose} days and no recent activity. Confirm deal is alive or push.`;
-          } else if (daysToClose <= 7) {
+            criticalReason = `${amt || "Deal"} closes in ${daysToClose}d with no recent engagement`;
+            context = `${acct} deal closes in ${daysToClose} days but there's been no email, call, or meeting activity detected. This deal may be at risk of slipping.`;
+            suggestion = "Reach out today — call or email the primary contact to confirm timeline.";
+            dueTime = `Closes in ${daysToClose}d`;
+
+          } else if (daysToClose !== null && daysToClose <= 7) {
             priority = "high";
-            suggestion = `Close date in ${daysToClose} days. Review status.`;
-          } else if (daysSinceActivity >= 14 && !hasRealTouch) {
+            context = `${acct} deal closing in ${daysToClose} days. Recent activity detected. ${o.StageName} stage${amt ? ", " + amt : ""}.`;
+            suggestion = "Review deal status and confirm close is on track.";
+            dueTime = `Closes in ${daysToClose}d`;
+
+          } else if (daysSinceActivity >= 14 && daysSinceActivity < 999 && !hasRealTouch) {
             priority = "high";
-            suggestion = `No activity in ${daysSinceActivity}d across Gmail, Calendar, and Chorus. Re-engage or close.`;
-          } else if (daysSinceActivity >= 14 && hasRealTouch) {
+            context = `No emails, calls, or meetings with ${acct} in ${daysSinceActivity} days. ${o.StageName} stage${amt ? " with " + amt + " at stake" : ""}. This deal is going cold.`;
+            suggestion = "Send a value-add email or schedule a call. If the deal is dead, close it out.";
+            dueTime = `${daysSinceActivity}d silent`;
+
+          } else if (daysSinceActivity >= 14 && daysSinceActivity < 999 && hasRealTouch) {
             priority = "medium";
-            suggestion = `SFDC shows ${daysSinceActivity}d stale but Gmail/Cal has recent touch. Update SFDC.`;
+            context = `SFDC shows no logged activity for ${acct} in ${daysSinceActivity} days, but Gmail/Calendar has recent touches. CRM data may be stale.`;
+            suggestion = "Log recent activity in SFDC to keep pipeline data accurate.";
+            dueTime = "SFDC stale";
+
+          } else if (daysToClose !== null && daysToClose < 0) {
+            // Past due handled separately below
+            return;
           } else {
-            suggestion = `Close date: ${o.CloseDate}. Review and advance.`;
+            return; // No clear reason to surface
           }
 
           actions.dealsAtRisk.push({
-            id: `opp-${o.Id}`,
-            type: "follow-up",
-            priority,
-            criticalReason,
-            title: `${o.Name}`,
-            subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"}`,
-            channel: "salesforce",
-            dueTime: daysToClose <= 7 ? `Closes in ${daysToClose}d` : `${daysSinceActivity}d since activity`,
-            suggestedAction: suggestion,
+            id: `opp-${o.Id}`, type: "follow-up", priority, criticalReason, context,
+            title: o.Name,
+            subtitle: `${acct} · ${o.StageName}${amt ? " · " + amt : ""}`,
+            channel: "salesforce", dueTime, suggestedAction: suggestion,
           });
         });
 
