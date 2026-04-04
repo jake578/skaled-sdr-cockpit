@@ -322,9 +322,24 @@ export default function App() {
   }, [customActions]);
 
   const markLiveAction = useCallback((id, status) => {
-    setActionStatuses(prev => ({ ...prev, [id]: status }));
-    setToast(status === "done" ? "Marked as done" : status === "skipped" ? "Skipped" : "Reopened");
+    setActionStatuses(prev => ({
+      ...prev,
+      [id]: { status, timestamp: Date.now() },
+    }));
+    setToast(status === "done" ? "Marked as done — returns in 3 days if unresolved" : status === "skipped" ? "Skipped — returns in 3 days" : "Reopened");
   }, []);
+
+  // 3-day cooldown check: returns true if item should be hidden
+  const COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+  const isInCooldown = (id) => {
+    const entry = actionStatuses[id];
+    if (!entry) return false;
+    // Support old format (string) and new format ({ status, timestamp })
+    if (typeof entry === "string") return entry === "done" || entry === "skipped";
+    if (entry.status === "pending") return false;
+    if (!entry.timestamp) return entry.status === "done" || entry.status === "skipped";
+    return (Date.now() - entry.timestamp) < COOLDOWN_MS;
+  };
 
   // Merge all activity sources: SFDC Events + Gmail + Calendar
   const mergedActivities = (() => {
@@ -594,7 +609,7 @@ export default function App() {
           };
           let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : [];
           // Remove done/skipped items
-          currentActions = currentActions.filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped");
+          currentActions = currentActions.filter(a => !isInCooldown(a.id));
           if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
             currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
           }
@@ -602,7 +617,7 @@ export default function App() {
             currentActions = currentActions.filter(a => a.priority === oppEdits.priorityFilter);
           }
           const isLive = !!liveActions;
-          const countFor = (key) => (queueMap[key] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped").length;
+          const countFor = (key) => (queueMap[key] || []).filter(a => !isInCooldown(a.id)).length;
 
           const queues = [
             { key: "external", label: "External", color: "#10B981" },
@@ -740,10 +755,10 @@ export default function App() {
                 <span style={{ fontSize: 12, color: "#64748B", marginRight: 4 }}>Priority:</span>
                 <button style={{ padding: "4px 10px", borderRadius: 4, border: "1px solid #334155", cursor: "pointer", fontSize: 11, fontWeight: 600, background: !oppEdits.priorityFilter ? "#10B981" : "transparent", color: !oppEdits.priorityFilter ? "#fff" : "#94A3B8" }}
                   onClick={() => setOppEdits(d => ({ ...d, priorityFilter: null }))}>
-                  All ({(liveActions ? (queueMap[actionQueue] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped") : []).length})
+                  All ({(liveActions ? (queueMap[actionQueue] || []).filter(a => !isInCooldown(a.id)) : []).length})
                 </button>
                 {["critical", "high", "medium", "low"].map(p => {
-                  const activeQueue = liveActions ? (queueMap[actionQueue] || []).filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped") : [];
+                  const activeQueue = liveActions ? (queueMap[actionQueue] || []).filter(a => !isInCooldown(a.id)) : [];
                   const count = activeQueue.filter(a => a.priority === p).length;
                   if (count === 0) return null;
                   return (
@@ -784,7 +799,8 @@ export default function App() {
 
             {currentActions.map(action => {
               const expanded = expandedAction === action.id;
-              const status = isLive ? (actionStatuses[action.id] || "pending") : action.status;
+              const rawSt = actionStatuses[action.id];
+              const status = isLive ? (typeof rawSt === "string" ? rawSt : rawSt?.status || "pending") : action.status;
               const done = status === "done";
               const skipped = status === "skipped";
               return (
