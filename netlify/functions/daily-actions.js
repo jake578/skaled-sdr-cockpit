@@ -54,10 +54,12 @@ export default async (req) => {
         subjectLower.includes("all-hands") || subjectLower.includes("internal") ||
         subjectLower.includes("staffing");
 
+      const calPriority = isToday ? "critical" : isTomorrow ? "high" : "medium";
       const action = {
         id: `cal-${event.id}`,
         type: "meeting",
-        priority: isToday ? "critical" : isTomorrow ? "high" : "medium",
+        priority: calPriority,
+        criticalReason: calPriority === "critical" ? `Meeting with ${externalAttendees.length > 0 ? externalAttendees[0].name : "attendees"} is TODAY at ${timeStr}` : null,
         title: `${dayLabel} ${timeStr} — ${subject}`,
         subtitle: externalAttendees.length > 0
           ? `With: ${externalAttendees.map(a => a.name).join(", ")}`
@@ -169,6 +171,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
               id: `gmail-${msg.id}`,
               type: "email",
               priority: classification === "NEEDS_ACTION" ? (isToday ? "critical" : "high") : "medium",
+              criticalReason: classification === "NEEDS_ACTION" && isToday ? `${contactName} needs your direct response today — ${cls?.reason || "action required"}` : null,
               title: `Reply to ${contactName}`,
               subtitle: msg.subject || "No subject",
               channel: "email",
@@ -368,18 +371,24 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
           const hasRealTouch = !!accountLastTouch[acctName]; // Gmail/Cal/Chorus confirmed
           let priority = "medium";
           let suggestion = "";
+          let criticalReason = null;
           if (daysToClose <= 3) {
             priority = "critical";
+            criticalReason = `Closes in ${daysToClose} day${daysToClose !== 1 ? "s" : ""} — ${o.Amount ? "$" + o.Amount.toLocaleString() + " at stake" : "needs close date update or commitment"}`;
             suggestion = `Close date in ${daysToClose} days. Confirm this will close or push the date.`;
+          } else if (daysToClose <= 7 && !hasRealTouch) {
+            priority = "critical";
+            criticalReason = `Closes in ${daysToClose}d with ZERO recent engagement across email, calendar, or calls`;
+            suggestion = `Close date in ${daysToClose} days and no recent activity. Confirm deal is alive or push.`;
           } else if (daysToClose <= 7) {
-            priority = hasRealTouch ? "high" : "critical"; // If no real touch, more urgent
-            suggestion = `Close date in ${daysToClose} days. ${hasRealTouch ? "Review status." : "No recent engagement detected — confirm deal is alive."}`;
+            priority = "high";
+            suggestion = `Close date in ${daysToClose} days. Review status.`;
           } else if (daysSinceActivity >= 14 && !hasRealTouch) {
             priority = "high";
-            suggestion = `No activity in ${daysSinceActivity}d across Gmail, Calendar, and Chorus. This deal may be dead — re-engage or close.`;
+            suggestion = `No activity in ${daysSinceActivity}d across Gmail, Calendar, and Chorus. Re-engage or close.`;
           } else if (daysSinceActivity >= 14 && hasRealTouch) {
             priority = "medium";
-            suggestion = `SFDC shows ${daysSinceActivity}d stale but Gmail/Cal has recent touch. Update SFDC or review.`;
+            suggestion = `SFDC shows ${daysSinceActivity}d stale but Gmail/Cal has recent touch. Update SFDC.`;
           } else {
             suggestion = `Close date: ${o.CloseDate}. Review and advance.`;
           }
@@ -388,6 +397,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
             id: `opp-${o.Id}`,
             type: "follow-up",
             priority,
+            criticalReason,
             title: `${o.Name}`,
             subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"}`,
             channel: "salesforce",
@@ -428,10 +438,12 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
 
         pastDueOpps.forEach(o => {
           const daysOverdue = Math.floor((now.getTime() - new Date(o.CloseDate).getTime()) / 86400000);
+          const pdPriority = daysOverdue > 30 ? "critical" : daysOverdue > 14 ? "high" : "medium";
           actions.dealsAtRisk.push({
             id: `opp-${o.Id}`,
             type: "follow-up",
-            priority: daysOverdue > 30 ? "critical" : daysOverdue > 14 ? "high" : "medium",
+            priority: pdPriority,
+            criticalReason: pdPriority === "critical" ? `${daysOverdue} days past close date — ${o.Amount ? "$" + o.Amount.toLocaleString() + " aging your pipeline" : "polluting pipeline accuracy"}` : null,
             title: `${o.Name}`,
             subtitle: `${o.Account?.Name || "—"} · ${o.StageName} · ${o.Amount ? "$" + o.Amount.toLocaleString() : "No amount"} · ${o.Group_Forecast_Category__c || "—"}`,
             channel: "salesforce",

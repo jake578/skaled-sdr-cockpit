@@ -930,6 +930,12 @@ export default function App() {
                         {done && <span style={s.badge("#10B981")}>Done</span>}
                         {skipped && <span style={s.badge("#64748B")}>Skipped</span>}
                       </div>
+                      {/* Critical reason — WHY this is critical */}
+                      {action.criticalReason && action.priority === "critical" && !done && (
+                        <div style={{ fontSize: 11, color: "#EF4444", fontWeight: 600, marginBottom: 4, background: "#EF444410", padding: "4px 8px", borderRadius: 4 }}>
+                          ⚠ {action.criticalReason}
+                        </div>
+                      )}
                       <div style={{ fontSize: 14, fontWeight: 600, color: done ? "#64748B" : "#F1F5F9", textDecoration: done ? "line-through" : "none" }}>
                         {action.title}
                       </div>
