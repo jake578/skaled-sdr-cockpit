@@ -60,15 +60,48 @@ export default async (req) => {
         return;
       }
 
+      // Revenue spread: 1-month deals stay in close month
+      // Multi-month deals spread over 2.5 months from close date
+      // Split: 40% month 1, 35% month 2, 25% month 3 (half)
       const oppMonth = o.CloseDate.substring(0, 7);
-      const m = monthly.find(m => m.month === oppMonth);
-      if (!m) return;
+      const closeMonthIdx = monthly.findIndex(m => m.month === oppMonth);
+      if (closeMonthIdx < 0) return;
 
-      m.deals.push(deal);
-      if (cat === "Commit") m.committed += weighted;
-      else if (cat === "Best Case") m.bestCase += weighted;
-      else m.pipeline += weighted;
-      m.total += weighted;
+      // Determine if this is a one-time or multi-month engagement
+      // Heuristic: deals < $15K are likely one-month, larger deals spread
+      const isOneMonth = amount < 15000;
+
+      if (isOneMonth) {
+        // One-month deal: all revenue in close month
+        const m = monthly[closeMonthIdx];
+        m.deals.push(deal);
+        if (cat === "Commit") m.committed += weighted;
+        else if (cat === "Best Case") m.bestCase += weighted;
+        else m.pipeline += weighted;
+        m.total += weighted;
+      } else {
+        // Multi-month: spread over 2.5 months (40/35/25 split)
+        const splits = [0.4, 0.35, 0.25];
+        const spreadDeal = { ...deal, spreadNote: "Spread over 2.5 months" };
+        for (let s = 0; s < 3; s++) {
+          const mIdx = closeMonthIdx + s;
+          if (mIdx >= monthly.length) break;
+          const m = monthly[mIdx];
+          const portion = Math.round(weighted * splits[s]);
+          const rawPortion = Math.round(amount * splits[s]);
+
+          if (s === 0) {
+            m.deals.push({ ...spreadDeal, weighted: portion, spreadAmount: rawPortion, spreadPct: "40%" });
+          } else {
+            m.deals.push({ ...spreadDeal, weighted: portion, spreadAmount: rawPortion, spreadPct: s === 1 ? "35%" : "25%", isSpread: true });
+          }
+
+          if (cat === "Commit") m.committed += portion;
+          else if (cat === "Best Case") m.bestCase += portion;
+          else m.pipeline += portion;
+          m.total += portion;
+        }
+      }
     });
 
     // Unweighted totals per month
