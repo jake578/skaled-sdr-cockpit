@@ -25,6 +25,7 @@ import WinLossPatterns from "./components/WinLossPatterns";
 import BoardReport from "./components/BoardReport";
 import SuggestionCards from "./components/SuggestionCards";
 import DeepDealIntel from "./components/DeepDealIntel";
+import MissingContacts from "./components/MissingContacts";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + (n || 0).toLocaleString();
@@ -163,7 +164,8 @@ export default function App() {
   const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showPipelineDetail, setShowPipelineDetail] = useState(false);
-  const [showDeepIntel, setShowDeepIntel] = useState(null); // { oppId, oppName, accountName }
+  const [showDeepIntel, setShowDeepIntel] = useState(null);
+  const [showMissingContacts, setShowMissingContacts] = useState(null); // { oppId, accountId, accountName } // { oppId, oppName, accountName }
   const [showDealScore, setShowDealScore] = useState(null); // { oppId, oppName }
   const [showPostMeeting, setShowPostMeeting] = useState(null); // { id, subject, account }
   const [showCashFlow, setShowCashFlow] = useState(false);
@@ -1293,6 +1295,7 @@ export default function App() {
                       <button style={s.btn("#8B5CF6")} onClick={() => setShowDealScore({ oppId: opp.id, oppName: opp.name })}>Score</button>
                       <button style={{ padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: "linear-gradient(135deg, #8B5CF6, #EC4899)", color: "#fff" }} onClick={() => setShowDeepIntel({ oppId: opp.id, oppName: opp.name, accountName: opp.account })}>Deep Intel</button>
                       <button style={s.btn("#F59E0B")} onClick={() => setShowRelMap({ accountId: null, accountName: opp.account })}>Relationships</button>
+                      <button style={s.btn("#06B6D4")} onClick={() => setShowMissingContacts({ oppId: opp.id, accountName: opp.account })}>+ Contacts</button>
                       <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `Follow up on ${opp.name}. Next step: ${opp.nextStep}` })}>Delegate</button>
                       {liveOpps && (
                         <button style={s.btn("#F59E0B")} onClick={() => {
@@ -1732,6 +1735,10 @@ export default function App() {
           onEditOpp={(id) => { setShowPipelineDetail(false); setView("pipeline"); setPipelineTab("opps"); setTimeout(() => { setEditingOpp(id); const opp = displayOpps.find(o => o.id === id); if (opp) setOppEdits({ StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", Group_Forecast_Category__c: opp.forecastCategory || "" }); }, 100); }}
           onInspectOpp={(data) => { setShowPipelineDetail(false); setShowDealInspector(data); }}
         />
+      )}
+
+      {showMissingContacts && (
+        <MissingContacts oppId={showMissingContacts.oppId} accountId={showMissingContacts.accountId} accountName={showMissingContacts.accountName} onClose={() => setShowMissingContacts(null)} />
       )}
 
       {showDeepIntel && (
