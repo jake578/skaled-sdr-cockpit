@@ -144,74 +144,124 @@ export default async (req) => {
           return data.records || [];
         };
 
-        // ── Build cross-source last touch map (Gmail + Calendar + Chorus) ──
+        // ── Build cross-source last touch map (contact emails + account names) ──
         const allOpenOpps = await sfdcQuery(
-          `SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 100`
+          `SELECT Id, Name, Account.Name, AccountId, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CloseDate ASC LIMIT 100`
         );
 
-        const accountLastTouch = {};
-        // Gmail sent emails (last 30 days)
-        try {
-          const gtoken = await getAccessToken();
-          const sentRes = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=in:sent newer_than:30d`,
-            { headers: { Authorization: `Bearer ${gtoken}` } }
-          );
-          const sentData = await sentRes.json();
-          if (sentData.messages?.length) {
-            const emailDetails = await Promise.all(
-              sentData.messages.slice(0, 60).map(async m => {
-                const res = await fetch(
-                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Subject`,
-                  { headers: { Authorization: `Bearer ${gtoken}` } }
-                );
-                if (!res.ok) return null;
-                const msg = await res.json();
-                const headers = {};
-                (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
-                return headers;
-              })
-            );
-            emailDetails.filter(Boolean).forEach(e => {
-              const dateStr = e.date ? new Date(e.date).toISOString().split("T")[0] : null;
-              if (!dateStr) return;
-              const text = ((e.to || "") + " " + (e.subject || "")).toLowerCase();
-              allOpenOpps.forEach(o => {
-                const acctName = (o.Account?.Name || "").toLowerCase();
-                if (acctName && acctName.length > 2 && text.includes(acctName)) {
-                  if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
-                }
-              });
+        // Pull contact emails per account for precise matching
+        const accountContacts = {};
+        const uniqueAccountIds = [...new Set(allOpenOpps.map(o => o.AccountId).filter(Boolean))];
+        if (uniqueAccountIds.length > 0) {
+          // Batch query contacts — up to 20 accounts at a time
+          for (let i = 0; i < uniqueAccountIds.length; i += 20) {
+            const batch = uniqueAccountIds.slice(i, i + 20);
+            const idList = batch.map(id => `'${id}'`).join(",");
+            const contacts = await sfdcQuery(`SELECT AccountId, Email, Name FROM Contact WHERE AccountId IN (${idList}) AND Email != null LIMIT 200`);
+            contacts.forEach(c => {
+              if (!accountContacts[c.AccountId]) accountContacts[c.AccountId] = [];
+              accountContacts[c.AccountId].push({ email: c.Email.toLowerCase(), name: c.Name });
             });
           }
-        } catch { /* Gmail unavailable */ }
+        }
 
-        // Calendar meetings (last 30 days)
-        try {
-          const gtoken = await getAccessToken();
-          const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
-          const calRes = await fetch(
-            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(now.toISOString())}&maxResults=100&singleEvents=true&orderBy=startTime`,
-            { headers: { Authorization: `Bearer ${gtoken}` } }
-          );
-          const calData = await calRes.json();
-          (calData.items || []).forEach(event => {
-            const text = ((event.summary || "") + " " + (event.attendees || []).map(a => (a.displayName || a.email || "")).join(" ")).toLowerCase();
-            const dateStr = (event.start?.dateTime || event.start?.date || "").split("T")[0];
-            if (!dateStr) return;
-            allOpenOpps.forEach(o => {
-              const acctName = (o.Account?.Name || "").toLowerCase();
-              if (acctName && acctName.length > 2 && text.includes(acctName)) {
-                if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+        const accountLastTouch = {}; // accountName (lowercase) → date string
+        const gtoken = await getAccessToken().catch(() => null);
+
+        // Gmail: search by CONTACT EMAILS (exact match, not fuzzy name)
+        if (gtoken) {
+          // Build a map of email domain → account name for domain matching
+          const domainToAccount = {};
+          allOpenOpps.forEach(o => {
+            const acctName = (o.Account?.Name || "").toLowerCase();
+            const contacts = accountContacts[o.AccountId] || [];
+            contacts.forEach(c => {
+              const domain = c.email.split("@")[1];
+              if (domain && !domain.includes("gmail") && !domain.includes("yahoo") && !domain.includes("hotmail") && !domain.includes("outlook")) {
+                domainToAccount[domain] = acctName;
               }
             });
           });
-        } catch { /* Calendar unavailable */ }
+
+          // Search Gmail for emails with contact addresses (batched by account)
+          for (const opp of allOpenOpps.slice(0, 30)) {
+            const acctName = (opp.Account?.Name || "").toLowerCase();
+            const contacts = accountContacts[opp.AccountId] || [];
+            if (contacts.length === 0) continue;
+
+            // Search by top 3 contact emails
+            const emailQueries = contacts.slice(0, 3).map(c => `from:${c.email} OR to:${c.email}`);
+            const query = emailQueries.join(" OR ") + " newer_than:30d";
+
+            try {
+              const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=${encodeURIComponent(query)}`, { headers: { Authorization: `Bearer ${gtoken}` } });
+              const data = await res.json();
+              if (data.messages?.length) {
+                // Get the date of the most recent email
+                const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.messages[0].id}?format=metadata&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gtoken}` } });
+                if (msgRes.ok) {
+                  const msg = await msgRes.json();
+                  const dateH = msg.payload?.headers?.find(h => h.name.toLowerCase() === "date");
+                  if (dateH) {
+                    const dateStr = new Date(dateH.value).toISOString().split("T")[0];
+                    if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          // Also search by account name as fallback for accounts with no contacts
+          try {
+            const noContactAccounts = allOpenOpps.filter(o => !(accountContacts[o.AccountId]?.length > 0));
+            for (const opp of noContactAccounts.slice(0, 10)) {
+              const acctName = (opp.Account?.Name || "").toLowerCase();
+              if (acctName.length < 3) continue;
+              try {
+                const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q="${opp.Account?.Name}" newer_than:30d`, { headers: { Authorization: `Bearer ${gtoken}` } });
+                const data = await res.json();
+                if (data.messages?.length) {
+                  const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.messages[0].id}?format=metadata&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gtoken}` } });
+                  if (msgRes.ok) {
+                    const msg = await msgRes.json();
+                    const dateH = msg.payload?.headers?.find(h => h.name.toLowerCase() === "date");
+                    if (dateH) {
+                      const dateStr = new Date(dateH.value).toISOString().split("T")[0];
+                      if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+                    }
+                  }
+                }
+              } catch {}
+            }
+          } catch {}
+
+          // Calendar: search by attendee emails
+          try {
+            const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
+            const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(now.toISOString())}&maxResults=200&singleEvents=true`, { headers: { Authorization: `Bearer ${gtoken}` } });
+            const calData = await calRes.json();
+            (calData.items || []).forEach(event => {
+              const dateStr = (event.start?.dateTime || event.start?.date || "").split("T")[0];
+              if (!dateStr) return;
+              const attendeeEmails = (event.attendees || []).map(a => (a.email || "").toLowerCase());
+              // Match attendee emails to account contacts
+              for (const opp of allOpenOpps) {
+                const acctName = (opp.Account?.Name || "").toLowerCase();
+                const contacts = accountContacts[opp.AccountId] || [];
+                const hasMatch = contacts.some(c => attendeeEmails.includes(c.email)) ||
+                  (acctName.length > 2 && (event.summary || "").toLowerCase().includes(acctName));
+                if (hasMatch) {
+                  if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
+                }
+              }
+            });
+          } catch {}
+        }
 
         // Chorus calls from SFDC Events
         try {
           const chorusEvents = await sfdcQuery(
-            `SELECT Subject, What.Name, StartDateTime FROM Event WHERE Subject LIKE 'Chorus%' AND StartDateTime >= LAST_N_DAYS:30 ORDER BY StartDateTime DESC LIMIT 100`
+            `SELECT Subject, What.Name, StartDateTime FROM Event WHERE Subject LIKE 'Chorus%' AND StartDateTime >= LAST_N_DAYS:60 ORDER BY StartDateTime DESC LIMIT 100`
           );
           chorusEvents.forEach(e => {
             const dateStr = (e.StartDateTime || "").split("T")[0];
@@ -224,7 +274,7 @@ export default async (req) => {
               }
             });
           });
-        } catch { /* Chorus unavailable */ }
+        } catch {}
 
         // Helper: get real days since activity for any opp
         const getRealDaysSince = (o) => {
