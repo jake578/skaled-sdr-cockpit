@@ -192,21 +192,28 @@ export default async (req) => {
             });
           });
 
-          // Search Gmail for emails with contact addresses (batched by account)
-          for (const opp of allOpenOpps.slice(0, 30)) {
+          // Search Gmail in PARALLEL batches — only for opps with stale SFDC activity
+          const oppsNeedingGmailCheck = allOpenOpps.filter(o => {
+            const sfdcDays = o.LastActivityDate ? Math.floor((now - new Date(o.LastActivityDate)) / 86400000) : 999;
+            return sfdcDays >= 7; // Only check Gmail if SFDC says 7+ days stale
+          }).slice(0, 15); // Cap at 15 to stay fast
+
+          const gmailCheck = async (opp) => {
             const acctName = (opp.Account?.Name || "").toLowerCase();
             const contacts = accountContacts[opp.AccountId] || [];
-            if (contacts.length === 0) continue;
 
-            // Search by top 3 contact emails
-            const emailQueries = contacts.slice(0, 3).map(c => `from:${c.email} OR to:${c.email}`);
-            const query = emailQueries.join(" OR ") + " newer_than:30d";
+            // Try contact emails first, then account name
+            let query;
+            if (contacts.length > 0) {
+              query = contacts.slice(0, 2).map(c => `from:${c.email} OR to:${c.email}`).join(" OR ") + " newer_than:30d";
+            } else if (acctName.length > 2) {
+              query = `"${opp.Account?.Name}" newer_than:30d`;
+            } else return;
 
             try {
               const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q=${encodeURIComponent(query)}`, { headers: { Authorization: `Bearer ${gtoken}` } });
               const data = await res.json();
               if (data.messages?.length) {
-                // Get the date of the most recent email
                 const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.messages[0].id}?format=metadata&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gtoken}` } });
                 if (msgRes.ok) {
                   const msg = await msgRes.json();
@@ -218,31 +225,13 @@ export default async (req) => {
                 }
               }
             } catch {}
+          };
+
+          // Run in parallel batches of 5
+          for (let i = 0; i < oppsNeedingGmailCheck.length; i += 5) {
+            await Promise.all(oppsNeedingGmailCheck.slice(i, i + 5).map(gmailCheck));
           }
 
-          // Also search by account name as fallback for accounts with no contacts
-          try {
-            const noContactAccounts = allOpenOpps.filter(o => !(accountContacts[o.AccountId]?.length > 0));
-            for (const opp of noContactAccounts.slice(0, 10)) {
-              const acctName = (opp.Account?.Name || "").toLowerCase();
-              if (acctName.length < 3) continue;
-              try {
-                const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=1&q="${opp.Account?.Name}" newer_than:30d`, { headers: { Authorization: `Bearer ${gtoken}` } });
-                const data = await res.json();
-                if (data.messages?.length) {
-                  const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.messages[0].id}?format=metadata&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gtoken}` } });
-                  if (msgRes.ok) {
-                    const msg = await msgRes.json();
-                    const dateH = msg.payload?.headers?.find(h => h.name.toLowerCase() === "date");
-                    if (dateH) {
-                      const dateStr = new Date(dateH.value).toISOString().split("T")[0];
-                      if (!accountLastTouch[acctName] || dateStr > accountLastTouch[acctName]) accountLastTouch[acctName] = dateStr;
-                    }
-                  }
-                }
-              } catch {}
-            }
-          } catch {}
 
           // Calendar: search by attendee emails
           try {
@@ -463,59 +452,7 @@ export default async (req) => {
     actions.external.sort(sortByPriority);
     actions.internal.sort(sortByPriority);
 
-    // ── AI Enrichment: generate specific suggested actions ────
-    try {
-      const allActions = [
-        ...actions.external.slice(0, 8).map(a => ({ queue: "external", ...a })),
-        ...actions.internal.slice(0, 5).map(a => ({ queue: "internal", ...a })),
-        ...actions.sfdcCleanup.slice(0, 5).map(a => ({ queue: "sfdcCleanup", ...a })),
-        ...actions.dealsAtRisk.slice(0, 5).map(a => ({ queue: "dealsAtRisk", ...a })),
-      ];
-
-      if (allActions.length > 0) {
-        const actionSummary = allActions.map((a, i) =>
-          `${i}. [${a.priority}] ${a.title} | ${a.subtitle || ""} | Current suggestion: ${a.suggestedAction || "none"}`
-        ).join("\n");
-
-        const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "x-api-key": process.env.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1500,
-            system: `You are Jake Dunlap's action assistant. Jake is CEO of Skaled Consulting. For each action below, write a specific 1-2 sentence suggested action that tells Jake exactly what to do. Be concrete — name the person, reference the deal context, suggest the specific email/call/update to make. No generic advice like "review and follow up." Instead say things like "Send Amy the revised SOW with the Q3 timeline she asked about" or "Push this to Closed Lost — no response in 45 days and they went with a competitor." Plain text only, no markdown, no asterisks.`,
-            messages: [{
-              role: "user",
-              content: `Today is ${now.toISOString().split("T")[0]}. Here are Jake's actions. Return a JSON array of objects with "index" (number) and "suggestion" (string) for each:\n\n${actionSummary}`,
-            }],
-          }),
-        });
-
-        if (claudeRes.ok) {
-          const data = await claudeRes.json();
-          const text = data.content?.[0]?.text || "";
-          try {
-            const jsonMatch = text.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              const suggestions = JSON.parse(jsonMatch[0]);
-              suggestions.forEach(s => {
-                const action = allActions[s.index];
-                if (action && s.suggestion) {
-                  // Find and update in the original queue
-                  const queue = actions[action.queue];
-                  const match = queue?.find(a => a.id === action.id);
-                  if (match) match.suggestedAction = s.suggestion;
-                }
-              });
-            }
-          } catch { /* Parse failed — keep original suggestions */ }
-        }
-      }
-    } catch { /* AI enrichment failed — keep original suggestions */ }
+    // AI Enrichment moved to on-demand (AI Suggestions tab) for faster initial load
 
     return Response.json(actions);
   } catch (e) {

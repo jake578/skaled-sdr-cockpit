@@ -278,21 +278,51 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // ── Fetch live metrics ──────────────────────────────────────
+  // ── Fetch live metrics (5-min cache) ───────────────────────
   useEffect(() => {
+    const CACHE_KEY = "cockpit_metrics_cache";
+    const CACHE_TTL = 5 * 60 * 1000;
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (cached && cached.data && (Date.now() - cached.timestamp) < CACHE_TTL) {
+        setLiveMetrics(cached.data);
+        return;
+      }
+    } catch {}
     fetch("/.netlify/functions/live-metrics")
       .then(r => r.json())
-      .then(data => { if (!data.error) setLiveMetrics(data); })
+      .then(data => {
+        if (!data.error) {
+          setLiveMetrics(data);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
+        }
+      })
       .catch(() => {});
   }, []);
 
-  // ── Fetch live daily actions ──────────────────────────────────
+  // ── Fetch live daily actions (5-min cache) ─────────────────────
   useEffect(() => {
+    const CACHE_KEY = "cockpit_actions_cache";
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+    // Try cache first for instant load
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (cached && cached.data && (Date.now() - cached.timestamp) < CACHE_TTL) {
+        setLiveActions(cached.data);
+        setActionsLoading(false);
+        return; // Use cache, skip fetch
+      }
+    } catch {}
+
     setActionsLoading(true);
     fetch("/.netlify/functions/daily-actions")
       .then(r => r.json())
       .then(data => {
-        if (data.external || data.internal) setLiveActions(data);
+        if (data.external || data.internal) {
+          setLiveActions(data);
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
+        }
         setActionsLoading(false);
       })
       .catch(() => setActionsLoading(false));
