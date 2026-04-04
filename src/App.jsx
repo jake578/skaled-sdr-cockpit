@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import {
-  REP, DAILY_ACTIONS, SEQUENCES, TOP_TOUCHPOINTS,
-  OPPORTUNITIES, RECENT_ACTIVITIES, ACCOUNTS, LEADS,
-  WEEKLY_ACTIVITY, PIPELINE_WEEKLY,
-} from "./mockData";
+// Mock data removed — all data is live
 import { useSalesforce } from "./useSalesforce";
 import { useActions } from "./useActions";
 import { useAuth } from "./useAuth";
@@ -133,11 +129,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const act = useActions(setToast);
   const [view, setView] = useState("actions");
-  const [actions, setActions] = useState(() => {
-    const saved = load();
-    if (saved.actions) return DAILY_ACTIONS.map(a => ({ ...a, status: saved.actions[a.id] || a.status }));
-    return DAILY_ACTIONS;
-  });
+  const [actions, setActions] = useState([]);
   const [expandedAction, setExpandedAction] = useState(null);
   const [search, setSearch] = useState("");
   const [pipelineTab, setPipelineTab] = useState("opps");
@@ -148,8 +140,12 @@ export default function App() {
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [actionQueue, setActionQueue] = useState("external");
-  const [liveActions, setLiveActions] = useState(null);
-  const [actionsLoading, setActionsLoading] = useState(false);
+  const [liveActions, setLiveActions] = useState(() => {
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000) return c.data; } catch {} return null;
+  });
+  const [actionsLoading, setActionsLoading] = useState(() => {
+    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !(c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000); } catch { return true; }
+  });
   const [actionStatuses, setActionStatuses] = useState(() => load().actionStatuses || {});
   const [storeLoaded, setStoreLoaded] = useState(false);
   const [selectedOpps, setSelectedOpps] = useState(new Set());
@@ -160,7 +156,9 @@ export default function App() {
   const [editingOpp, setEditingOpp] = useState(null);
   const [oppEdits, setOppEdits] = useState({ priorityFilter: "critical" });
   // Live metrics
-  const [liveMetrics, setLiveMetrics] = useState(null);
+  const [liveMetrics, setLiveMetrics] = useState(() => {
+    try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data && (Date.now() - c.timestamp) < 10 * 60 * 1000) return c.data; } catch {} return null;
+  });
   // New feature panels
   const [showEmailComposer, setShowEmailComposer] = useState(null); // { action, mode: "ai"|"manual" }
   const [showDealInspector, setShowDealInspector] = useState(null); // { oppId, oppName }
@@ -290,7 +288,7 @@ export default function App() {
   // ── Fetch live metrics (5-min cache) ───────────────────────
   useEffect(() => {
     const CACHE_KEY = "cockpit_metrics_cache";
-    const CACHE_TTL = 5 * 60 * 1000;
+    const CACHE_TTL = 10 * 60 * 1000;
     try {
       const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
       if (cached && cached.data && (Date.now() - cached.timestamp) < CACHE_TTL) {
@@ -312,19 +310,13 @@ export default function App() {
   // ── Fetch live daily actions (5-min cache) ─────────────────────
   useEffect(() => {
     const CACHE_KEY = "cockpit_actions_cache";
-    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    const CACHE_TTL = 10 * 60 * 1000; // 5 minutes
 
-    // Try cache first for instant load
-    try {
-      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-      if (cached && cached.data && (Date.now() - cached.timestamp) < CACHE_TTL) {
-        setLiveActions(cached.data);
-        setActionsLoading(false);
-        return; // Use cache, skip fetch
-      }
-    } catch {}
+    // Cache already loaded in useState init — always refresh in background
+    const hasCachedData = liveActions !== null;
+    if (!hasCachedData) setActionsLoading(true);
 
-    setActionsLoading(true);
+    // Always fetch fresh data (background refresh)
     fetch("/.netlify/functions/daily-actions")
       .then(r => r.json())
       .then(data => {
