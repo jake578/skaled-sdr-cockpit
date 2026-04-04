@@ -35,8 +35,17 @@ const LS_KEY = "ceo-cockpit-v2";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } };
 const save = (d) => localStorage.setItem(LS_KEY, JSON.stringify(d));
 
-// Clear old mock data from previous versions
-try { localStorage.removeItem("skaled-sdr-cockpit"); } catch {}
+// Clear ALL old data on version change
+const APP_VERSION = "v2.1";
+try {
+  if (localStorage.getItem("cockpit_version") !== APP_VERSION) {
+    localStorage.removeItem("skaled-sdr-cockpit");
+    localStorage.removeItem("cockpit_actions_cache");
+    localStorage.removeItem("cockpit_metrics_cache");
+    localStorage.removeItem("ceo-cockpit-v2");
+    localStorage.setItem("cockpit_version", APP_VERSION);
+  }
+} catch {}
 
 // ── Toast ──────────────────────────────────────────────────────
 function Toast({ msg, onDone }) {
