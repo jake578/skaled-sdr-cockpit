@@ -204,15 +204,18 @@ export default function App() {
   const [gmailActivities, setGmailActivities] = useState([]);
   const [calendarActivities, setCalendarActivities] = useState([]);
 
+  // Defer heavy SFDC pipeline load — runs after fast endpoints respond
   useEffect(() => {
     if (!sfdc.connected) return;
-    setSfdcLoading(true);
-    Promise.all([
-      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
-      sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
-      sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
+    // Delay 2 seconds to let fast endpoints render first
+    const timer = setTimeout(() => {
+      setSfdcLoading(true);
+      Promise.all([
+        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
+        sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
+        sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
+        sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
+        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
     ]).then(([opps, events, accounts, leads, wonOpps]) => {
       if (opps && opps.length) setLiveOpps(opps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
@@ -283,6 +286,8 @@ export default function App() {
       })));
       setSfdcLoading(false);
     });
+    }, 2000); // 2s delay to let fast endpoints render first
+    return () => clearTimeout(timer);
   }, [sfdc.connected]);
 
   // ── Fetch Gmail + Calendar activities (always, no SFDC dependency) ──
