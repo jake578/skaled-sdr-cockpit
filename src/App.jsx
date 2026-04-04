@@ -297,38 +297,30 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // ── Fetch live metrics (5-min cache) ───────────────────────
+  // ── PHASE 1: Fast load (SFDC only, <2s) ─────────────────────
   useEffect(() => {
-    const CACHE_KEY = "cockpit_metrics_cache";
-    const CACHE_TTL = 10 * 60 * 1000;
-    try {
-      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-      if (cached && cached.data && (Date.now() - cached.timestamp) < CACHE_TTL) {
-        setLiveMetrics(cached.data);
-        return;
+    const hasCached = liveActions !== null;
+    if (!hasCached) setActionsLoading(true);
+
+    // Fast endpoints — SFDC only, parallel
+    Promise.all([
+      fetch("/.netlify/functions/metrics-fast").then(r => r.json()).catch(() => null),
+      fetch("/.netlify/functions/actions-fast").then(r => r.json()).catch(() => null),
+    ]).then(([metrics, actions]) => {
+      if (metrics && !metrics.error) setLiveMetrics(metrics);
+      if (actions && (actions.external || actions.dealsAtRisk)) {
+        setLiveActions(prev => {
+          // Merge fast results, keep any existing enriched data
+          if (!prev) return actions;
+          return { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] };
+        });
+        setActionsLoading(false);
+      } else {
+        setActionsLoading(false);
       }
-    } catch {}
-    fetch("/.netlify/functions/live-metrics")
-      .then(r => r.json())
-      .then(data => {
-        if (!data.error) {
-          setLiveMetrics(data);
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
-        }
-      })
-      .catch(() => {});
-  }, []);
+    });
 
-  // ── Fetch live daily actions (5-min cache) ─────────────────────
-  useEffect(() => {
-    const CACHE_KEY = "cockpit_actions_cache";
-    const CACHE_TTL = 10 * 60 * 1000; // 5 minutes
-
-    // Cache already loaded in useState init — always refresh in background
-    const hasCachedData = liveActions !== null;
-    if (!hasCachedData) setActionsLoading(true);
-
-    // Always fetch fresh data (background refresh)
+    // ── PHASE 2: Full enrichment (Gmail + Calendar + Claude, background) ──
     fetch("/.netlify/functions/daily-actions")
       .then(r => r.json())
       .then(data => {
