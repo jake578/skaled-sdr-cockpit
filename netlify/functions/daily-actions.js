@@ -140,14 +140,18 @@ export default async (req) => {
           headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
           body: JSON.stringify({
             model: "claude-sonnet-4-20250514", max_tokens: 1024,
-            system: `You classify emails for Jake Dunlap, CEO of Skaled Consulting. For each email, determine if Jake PERSONALLY needs to respond or take action.
+            system: `You triage emails for Jake Dunlap, CEO of Skaled Consulting. For each email:
 
-NEEDS_ACTION (Critical): Someone is asking Jake a direct question, requesting a meeting, making a decision that needs his input, a prospect/client reaching out, a deal-related ask, someone senior reaching out
-FYI_ONLY (Skip): Newsletters, automated updates, FYI forwards, CC'd on threads, status updates that don't need response, calendar confirmations, receipts, shipping notifications
-CAN_WAIT (Medium): Team updates that might need response later, non-urgent internal asks, informational emails from known contacts
+1. Classify: NEEDS_ACTION / FYI_ONLY / CAN_WAIT
+2. Explain WHY Jake needs to act (not just "needs response" — say what the person is asking/wanting)
+3. Tell Jake exactly what to do
 
-Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself must respond.`,
-            messages: [{ role: "user", content: `Classify each email. Return JSON array: [{ "index": 0, "classification": "NEEDS_ACTION/FYI_ONLY/CAN_WAIT", "reason": "brief reason" }]\n\n${emailSummary}` }],
+NEEDS_ACTION: Direct question to Jake, decision needed, prospect/client asking something specific, money on the line, senior person reaching out, time-sensitive request
+FYI_ONLY: Newsletters, automated updates, CC threads, status updates, confirmations, receipts, marketing emails, internal FYIs
+CAN_WAIT: Non-urgent asks, team updates, informational
+
+Be VERY strict. 70%+ of emails should be FYI_ONLY. Only NEEDS_ACTION if Jake ignoring it would cost money or damage a relationship.`,
+            messages: [{ role: "user", content: `Classify each email. Return JSON array: [{ "index": 0, "classification": "NEEDS_ACTION/FYI_ONLY/CAN_WAIT", "why": "what the person wants from Jake specifically", "action": "exactly what Jake should do" }]\n\n${emailSummary}` }],
           }),
         });
 
@@ -171,12 +175,13 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
               id: `gmail-${msg.id}`,
               type: "email",
               priority: classification === "NEEDS_ACTION" ? (isToday ? "critical" : "high") : "medium",
-              criticalReason: classification === "NEEDS_ACTION" && isToday ? `${contactName} needs your direct response today — ${cls?.reason || "action required"}` : null,
-              title: `Reply to ${contactName}`,
-              subtitle: msg.subject || "No subject",
+              criticalReason: classification === "NEEDS_ACTION" ? `${cls?.why || contactName + " needs your response"}` : null,
+              title: `${contactName} — ${msg.subject || "No subject"}`,
+              subtitle: cls?.why || `Unread email`,
+              context: cls?.why || null,
               channel: "email",
               dueTime: isToday ? "Today" : dateStr,
-              suggestedAction: cls?.reason ? `${cls.reason}. "${msg.subject}"` : `Unread from ${contactName}: "${msg.subject}"`,
+              suggestedAction: cls?.action || `Review and respond to "${msg.subject}"`,
               contact: contactName,
             });
           });
