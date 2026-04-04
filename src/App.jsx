@@ -22,6 +22,7 @@ import CashFlow from "./components/CashFlow";
 import ExpansionSignals from "./components/ExpansionSignals";
 import RelationshipMap from "./components/RelationshipMap";
 import WinLossPatterns from "./components/WinLossPatterns";
+import BoardReport from "./components/BoardReport";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -166,6 +167,7 @@ export default function App() {
   const [showExpansion, setShowExpansion] = useState(false);
   const [showRelMap, setShowRelMap] = useState(null); // { accountId, accountName }
   const [showWinLoss, setShowWinLoss] = useState(false);
+  const [showBoardReport, setShowBoardReport] = useState(false);
   const [customActions, setCustomActions] = useState(() => load().customActions || []);
   const [closedWonOpps, setClosedWonOpps] = useState(null);
 
@@ -514,6 +516,7 @@ export default function App() {
           <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowCashFlow(true)}>Cash Flow</button>
           <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowExpansion(true)}>Expansion</button>
           <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowWinLoss(true)}>Win/Loss</button>
+          <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowBoardReport(true)}>QBR</button>
           <button style={{ ...s.btn("#1E293B"), fontSize: 11, padding: "4px 10px", color: "#64748B" }} onClick={auth.logout}>Logout</button>
         </div>
       </div>
@@ -527,7 +530,7 @@ export default function App() {
 
       {/* ── Metrics Bar ───────────────────────────────────────── */}
       <div style={s.metricsBar}>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("dashboard"); setPipelineTab("forecast"); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => setShowCashFlow(true)}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.weightedPipeline) : "..."}</div>
           <div style={s.metricLabel}>Weighted Forecast</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
@@ -850,7 +853,15 @@ export default function App() {
                             <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: action.id.replace("opp-", ""), oppName: action.title })}>
                               Inspect
                             </button>
+                            <button style={s.btn("#8B5CF6")} onClick={() => setShowDealScore({ oppId: action.id.replace("opp-", ""), oppName: action.title })}>
+                              Score
+                            </button>
                           </>
+                        )}
+                        {action.type === "meeting" && (
+                          <button style={s.btn("#06B6D4")} onClick={() => setShowPostMeeting({ id: action.id, subject: action.title, account: action.subtitle?.split("With:")[1]?.split(",")[0]?.trim() || action.subtitle })}>
+                            Post-Meeting
+                          </button>
                         )}
                         <button style={s.btn("#1E293B")} onClick={() => copyText(action.suggestedAction, "suggested action")}>Copy</button>
                       </div>
@@ -1715,6 +1726,7 @@ export default function App() {
       {showExpansion && <ExpansionSignals onClose={() => setShowExpansion(false)} />}
       {showRelMap && <RelationshipMap accountId={showRelMap.accountId} accountName={showRelMap.accountName} onClose={() => setShowRelMap(null)} />}
       {showWinLoss && <WinLossPatterns onClose={() => setShowWinLoss(false)} />}
+      {showBoardReport && <BoardReport onClose={() => setShowBoardReport(false)} />}
 
       {/* New Task Modal */}
       {showNewTask && (
