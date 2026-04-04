@@ -16,6 +16,12 @@ import WeeklyDigest from "./components/WeeklyDigest";
 import ClientHealth from "./components/ClientHealth";
 import RevenueForecast from "./components/RevenueForecast";
 import PipelineDetail from "./components/PipelineDetail";
+import DealScore from "./components/DealScore";
+import PostMeeting from "./components/PostMeeting";
+import CashFlow from "./components/CashFlow";
+import ExpansionSignals from "./components/ExpansionSignals";
+import RelationshipMap from "./components/RelationshipMap";
+import WinLossPatterns from "./components/WinLossPatterns";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -154,6 +160,12 @@ export default function App() {
   const [showWeeklyDigest, setShowWeeklyDigest] = useState(false);
   const [showNewTask, setShowNewTask] = useState(false);
   const [showPipelineDetail, setShowPipelineDetail] = useState(false);
+  const [showDealScore, setShowDealScore] = useState(null); // { oppId, oppName }
+  const [showPostMeeting, setShowPostMeeting] = useState(null); // { id, subject, account }
+  const [showCashFlow, setShowCashFlow] = useState(false);
+  const [showExpansion, setShowExpansion] = useState(false);
+  const [showRelMap, setShowRelMap] = useState(null); // { accountId, accountName }
+  const [showWinLoss, setShowWinLoss] = useState(false);
   const [customActions, setCustomActions] = useState(() => load().customActions || []);
   const [closedWonOpps, setClosedWonOpps] = useState(null);
 
@@ -499,6 +511,9 @@ export default function App() {
           {liveOpps && <span style={{ fontSize: 10, color: "#64748B", background: "#1E293B", padding: "2px 6px", borderRadius: 3 }}>LIVE</span>}
           <button style={{ ...s.btn("#8B5CF6"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowDailyBrief(true)}>AI Brief</button>
           <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowWeeklyDigest(true)}>Weekly</button>
+          <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowCashFlow(true)}>Cash Flow</button>
+          <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowExpansion(true)}>Expansion</button>
+          <button style={{ ...s.btn("#334155"), fontSize: 11, padding: "4px 10px" }} onClick={() => setShowWinLoss(true)}>Win/Loss</button>
           <button style={{ ...s.btn("#1E293B"), fontSize: 11, padding: "4px 10px", color: "#64748B" }} onClick={auth.logout}>Logout</button>
         </div>
       </div>
@@ -1241,6 +1256,8 @@ export default function App() {
                       <button style={s.btn("#1E293B")} onClick={() => copyText(`${opp.name}\nAmount: ${fmt(opp.amount)}\nStage: ${opp.stage}\nNext step: ${opp.nextStep}`, "opp details")}>Copy</button>
                       <button style={s.btn("#3B82F6")} onClick={() => setShowEmailComposer({ action: { id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage}`, contact: opp.contact, suggestedAction: `Follow up on ${opp.name}` }, mode: "ai" })}>AI Email</button>
                       <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: opp.id, oppName: opp.name })}>Inspect</button>
+                      <button style={s.btn("#8B5CF6")} onClick={() => setShowDealScore({ oppId: opp.id, oppName: opp.name })}>Score</button>
+                      <button style={s.btn("#F59E0B")} onClick={() => setShowRelMap({ accountId: null, accountName: opp.account })}>Relationships</button>
                       <button style={s.btn("#06B6D4")} onClick={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `Follow up on ${opp.name}. Next step: ${opp.nextStep}` })}>Delegate</button>
                       {liveOpps && (
                         <button style={s.btn("#F59E0B")} onClick={() => {
@@ -1679,6 +1696,25 @@ export default function App() {
           onInspectOpp={(data) => { setShowPipelineDetail(false); setShowDealInspector(data); }}
         />
       )}
+
+      {showDealScore && (
+        <DealScore oppId={showDealScore.oppId} oppName={showDealScore.oppName} onClose={() => setShowDealScore(null)} />
+      )}
+
+      {showPostMeeting && (
+        <PostMeeting event={showPostMeeting} onClose={() => setShowPostMeeting(null)}
+          onSendEmail={async (data) => { const ok = await act.sendEmail(data); if (ok) setShowPostMeeting(null); }}
+          onUpdateSFDC={async (fields) => {
+            const oppId = showPostMeeting.oppId;
+            if (oppId) { await act.updateSFDC("Opportunity", oppId, fields); setShowPostMeeting(null); }
+          }}
+        />
+      )}
+
+      {showCashFlow && <CashFlow onClose={() => setShowCashFlow(false)} />}
+      {showExpansion && <ExpansionSignals onClose={() => setShowExpansion(false)} />}
+      {showRelMap && <RelationshipMap accountId={showRelMap.accountId} accountName={showRelMap.accountName} onClose={() => setShowRelMap(null)} />}
+      {showWinLoss && <WinLossPatterns onClose={() => setShowWinLoss(false)} />}
 
       {/* New Task Modal */}
       {showNewTask && (
