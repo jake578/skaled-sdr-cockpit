@@ -1,4 +1,4 @@
-// Cash Flow Projection — pipeline-to-cash modeling by month
+// Cash Flow Projection — pipeline-to-cash with deal-level drill-down
 export default async (req) => {
   try {
     const cookieHeader = req.headers.get("cookie") || "";
@@ -15,52 +15,110 @@ export default async (req) => {
 
     const quarter = Math.floor(now.getMonth() / 3);
     const qStart = `${now.getFullYear()}-${String(quarter * 3 + 1).padStart(2, "0")}-01`;
+    const todayStr = now.toISOString().split("T")[0];
 
     const [openOpps, closedWon] = await Promise.all([
-      sfdcQuery(`SELECT Amount, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND Amount > 0`),
-      sfdcQuery(`SELECT Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= ${qStart}`),
+      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, CloseDate, StageName, Group_Forecast_Category__c, Probability, LastActivityDate FROM Opportunity WHERE IsClosed = false AND Amount > 0 ORDER BY CloseDate ASC`),
+      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= ${qStart} ORDER BY CloseDate DESC`),
     ]);
 
     const weights = { "Commit": 0.9, "Best Case": 0.6, "Pipeline": 0.3, "Omitted": 0, "Closed": 1.0 };
 
-    // Build next 6 months
+    // Build next 6 months with deal-level detail
     const monthly = [];
     for (let i = 0; i < 6; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthly.push({ month, committed: 0, bestCase: 0, pipeline: 0, total: 0 });
+      monthly.push({ month, committed: 0, bestCase: 0, pipeline: 0, total: 0, deals: [] });
     }
+
+    // Past due bucket
+    const pastDue = { month: "Past Due", committed: 0, bestCase: 0, pipeline: 0, total: 0, deals: [] };
 
     openOpps.forEach(o => {
       if (!o.CloseDate) return;
-      const oppMonth = o.CloseDate.substring(0, 7);
-      const m = monthly.find(m => m.month === oppMonth);
-      if (!m) return;
       const cat = o.Group_Forecast_Category__c || "Pipeline";
       const amount = o.Amount || 0;
       const w = weights[cat] ?? 0.3;
-      if (cat === "Commit") m.committed += amount * w;
-      else if (cat === "Best Case") m.bestCase += amount * w;
-      else m.pipeline += amount * w;
-      m.total += amount * w;
+      const weighted = Math.round(amount * w);
+
+      const deal = {
+        id: o.Id, name: o.Name, account: o.Account?.Name || "—",
+        amount, weighted, stage: o.StageName || "—",
+        category: cat, closeDate: o.CloseDate,
+        probability: o.Probability || 0,
+        lastActivity: o.LastActivityDate || "—",
+        pastDue: o.CloseDate < todayStr,
+      };
+
+      if (o.CloseDate < todayStr) {
+        pastDue.deals.push(deal);
+        if (cat === "Commit") pastDue.committed += weighted;
+        else if (cat === "Best Case") pastDue.bestCase += weighted;
+        else pastDue.pipeline += weighted;
+        pastDue.total += weighted;
+        return;
+      }
+
+      const oppMonth = o.CloseDate.substring(0, 7);
+      const m = monthly.find(m => m.month === oppMonth);
+      if (!m) return;
+
+      m.deals.push(deal);
+      if (cat === "Commit") m.committed += weighted;
+      else if (cat === "Best Case") m.bestCase += weighted;
+      else m.pipeline += weighted;
+      m.total += weighted;
     });
 
-    monthly.forEach(m => { m.committed = Math.round(m.committed); m.bestCase = Math.round(m.bestCase); m.pipeline = Math.round(m.pipeline); m.total = Math.round(m.total); });
+    // Unweighted totals per month
+    monthly.forEach(m => {
+      m.unweightedTotal = m.deals.reduce((s, d) => s + d.amount, 0);
+      m.dealCount = m.deals.length;
+      // Sort deals: Commit first, then by amount
+      const catOrder = { "Commit": 0, "Best Case": 1, "Pipeline": 2, "Omitted": 3 };
+      m.deals.sort((a, b) => (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9) || b.amount - a.amount);
+    });
+
+    pastDue.unweightedTotal = pastDue.deals.reduce((s, d) => s + d.amount, 0);
+    pastDue.dealCount = pastDue.deals.length;
+    pastDue.deals.sort((a, b) => b.amount - a.amount);
 
     // Rolling summaries
-    const today = now.toISOString().split("T")[0];
     const d30 = new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0];
     const d60 = new Date(now.getTime() + 60 * 86400000).toISOString().split("T")[0];
     const d90 = new Date(now.getTime() + 90 * 86400000).toISOString().split("T")[0];
 
-    const weightedSum = (maxDate) => Math.round(openOpps.filter(o => o.CloseDate && o.CloseDate >= today && o.CloseDate <= maxDate).reduce((s, o) => s + (o.Amount || 0) * (weights[o.Group_Forecast_Category__c] ?? 0.3), 0));
+    const weightedSum = (maxDate) => Math.round(openOpps.filter(o => o.CloseDate && o.CloseDate >= todayStr && o.CloseDate <= maxDate).reduce((s, o) => s + (o.Amount || 0) * (weights[o.Group_Forecast_Category__c] ?? 0.3), 0));
+    const unweightedSum = (maxDate) => Math.round(openOpps.filter(o => o.CloseDate && o.CloseDate >= todayStr && o.CloseDate <= maxDate).reduce((s, o) => s + (o.Amount || 0), 0));
 
-    const closedTotal = closedWon.reduce((s, o) => s + (o.Amount || 0), 0);
+    // Category totals
+    const categoryTotals = {};
+    openOpps.forEach(o => {
+      const cat = o.Group_Forecast_Category__c || "Pipeline";
+      if (!categoryTotals[cat]) categoryTotals[cat] = { count: 0, total: 0, weighted: 0 };
+      categoryTotals[cat].count++;
+      categoryTotals[cat].total += o.Amount || 0;
+      categoryTotals[cat].weighted += Math.round((o.Amount || 0) * (weights[cat] ?? 0.3));
+    });
 
     return Response.json({
-      monthly,
-      summary: { next30d: weightedSum(d30), next60d: weightedSum(d60), next90d: weightedSum(d90), totalProjected: monthly.reduce((s, m) => s + m.total, 0) },
-      closedThisQuarter: { count: closedWon.length, total: Math.round(closedTotal) },
+      monthly: pastDue.deals.length > 0 ? [pastDue, ...monthly] : monthly,
+      summary: {
+        next30d: weightedSum(d30), next60d: weightedSum(d60), next90d: weightedSum(d90),
+        next30dRaw: unweightedSum(d30), next60dRaw: unweightedSum(d60), next90dRaw: unweightedSum(d90),
+        totalProjected: monthly.reduce((s, m) => s + m.total, 0),
+        totalUnweighted: monthly.reduce((s, m) => s + m.unweightedTotal, 0),
+        totalDeals: openOpps.length,
+        pastDueCount: pastDue.deals.length,
+        pastDueAmount: pastDue.unweightedTotal,
+      },
+      categoryTotals: Object.entries(categoryTotals).map(([cat, d]) => ({ category: cat, ...d, weight: weights[cat] ?? 0.3 })).sort((a, b) => b.weighted - a.weighted),
+      closedThisQuarter: {
+        count: closedWon.length,
+        total: Math.round(closedWon.reduce((s, o) => s + (o.Amount || 0), 0)),
+        deals: closedWon.slice(0, 10).map(o => ({ id: o.Id, name: o.Name, account: o.Account?.Name || "—", amount: o.Amount || 0, closeDate: o.CloseDate })),
+      },
     });
   } catch (e) {
     return Response.json({ error: e.message }, { status: 500 });
