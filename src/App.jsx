@@ -327,7 +327,7 @@ export default function App() {
   // Merge all activity sources: SFDC Events + Gmail + Calendar
   const mergedActivities = (() => {
     const all = [...(liveActivities || []), ...gmailActivities, ...calendarActivities];
-    if (all.length === 0) return RECENT_ACTIVITIES;
+    if (all.length === 0) return [];
     // Dedupe meetings that appear in both Calendar and Chorus (same date + similar subject)
     const seen = new Set();
     const deduped = all.filter(a => {
@@ -341,10 +341,10 @@ export default function App() {
   })();
 
   // Use live data when available, otherwise mock
-  const displayOpps = liveOpps || OPPORTUNITIES;
+  const displayOpps = liveOpps || [];
   const displayActivities = mergedActivities;
-  const displayAccounts = liveAccounts || ACCOUNTS;
-  const displayLeads = liveLeads || LEADS;
+  const displayAccounts = liveAccounts || [];
+  const displayLeads = liveLeads || [];
 
   // Persist mock action statuses (merged, not overwriting)
   useEffect(() => {
@@ -554,7 +554,7 @@ export default function App() {
             {liveMetrics ? `${liveMetrics.wonThisQuarter} deals closed` : ""}
           </div>
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("sfdcCleanup"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("dealsAtRisk"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
           <div style={{ ...s.metricVal, color: liveMetrics?.pastDueDeals > 0 ? "#EF4444" : "#10B981" }}>
             {liveMetrics?.pastDueDeals ?? "..."}
           </div>
@@ -590,7 +590,7 @@ export default function App() {
             sfdcCleanup: liveActions?.sfdcCleanup || [],
             dealsAtRisk: liveActions?.dealsAtRisk || [],
           };
-          let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : filteredActions;
+          let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : [];
           // Remove done/skipped items
           currentActions = currentActions.filter(a => actionStatuses[a.id] !== "done" && actionStatuses[a.id] !== "skipped");
           if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
@@ -605,7 +605,6 @@ export default function App() {
           const queues = [
             { key: "external", label: "External", color: "#10B981" },
             { key: "internal", label: "Internal", color: "#3B82F6" },
-            { key: "sfdcCleanup", label: "SFDC Cleanup", color: "#F59E0B" },
             { key: "dealsAtRisk", label: "Deals at Risk", color: "#EF4444" },
             { key: "suggestions", label: "AI Suggestions", color: "#8B5CF6" },
           ];
@@ -766,9 +765,18 @@ export default function App() {
               />
             )}
 
-            {actionQueue !== "suggestions" && currentActions.length === 0 && !actionsLoading && (
+            {actionQueue !== "suggestions" && actionsLoading && (
+              <div style={{ padding: 20 }}>
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} style={{ background: "#1E293B", borderRadius: 8, height: 60, marginBottom: 6, opacity: 0.5 + (i * 0.1) }} />
+                ))}
+                <div style={{ textAlign: "center", color: "#8B5CF6", fontSize: 12, marginTop: 8 }}>Loading actions from SFDC, Gmail, Calendar...</div>
+              </div>
+            )}
+
+            {actionQueue !== "suggestions" && currentActions.length === 0 && !actionsLoading && isLive && (
               <div style={{ ...s.card, cursor: "default", textAlign: "center", color: "#64748B", padding: 32 }}>
-                {isLive ? "No actions in this queue" : "Loading actions..."}
+                No actions in this queue
               </div>
             )}
 
