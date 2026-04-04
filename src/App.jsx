@@ -30,10 +30,13 @@ import MissingContacts from "./components/MissingContacts";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + (n || 0).toLocaleString();
-const pct = (n) => n.toFixed(1) + "%";
-const LS_KEY = "skaled-sdr-cockpit";
+const pct = (n) => (n || 0).toFixed(1) + "%";
+const LS_KEY = "ceo-cockpit-v2";
 const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } };
 const save = (d) => localStorage.setItem(LS_KEY, JSON.stringify(d));
+
+// Clear old mock data from previous versions
+try { localStorage.removeItem("skaled-sdr-cockpit"); } catch {}
 
 // ── Toast ──────────────────────────────────────────────────────
 function Toast({ msg, onDone }) {
