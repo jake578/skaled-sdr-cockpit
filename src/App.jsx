@@ -373,11 +373,14 @@ export default function App() {
           const updated = { ...prev };
           data.enriched.forEach(e => {
             const action = allActions[e.index];
-            if (!action || !e.suggestion) return;
-            // Find and update in the correct queue
+            if (!action) return;
             for (const qKey of ["external", "internal", "dealsAtRisk"]) {
               const match = (updated[qKey] || []).find(a => a.id === action.id);
-              if (match) { match.suggestedAction = e.suggestion; break; }
+              if (match) {
+                if (e.context) match.context = e.context;
+                if (e.action) match.suggestedAction = e.action;
+                break;
+              }
             }
           });
           return { ...updated };
@@ -949,9 +952,15 @@ export default function App() {
                         {action.title}
                       </div>
                       <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 4 }}>{action.subtitle}</div>
-                      {/* Always show suggested action (not hidden behind expand) */}
+                      {/* Context: what's happening */}
+                      {action.context && !done && (
+                        <div style={{ fontSize: 12, color: "#CBD5E1", marginTop: 6, lineHeight: 1.5, background: "#1E293B", padding: "6px 10px", borderRadius: 4 }}>
+                          {action.context}
+                        </div>
+                      )}
+                      {/* Action: what to do */}
                       {action.suggestedAction && !done && (
-                        <div style={{ fontSize: 12, color: "#10B981", marginTop: 6, lineHeight: 1.5, background: "#10B98108", padding: "6px 10px", borderRadius: 4, borderLeft: "2px solid #10B98140" }}>
+                        <div style={{ fontSize: 12, color: "#10B981", marginTop: 4, lineHeight: 1.5, background: "#10B98108", padding: "6px 10px", borderRadius: 4, borderLeft: "2px solid #10B98140" }}>
                           → {action.suggestedAction}
                         </div>
                       )}

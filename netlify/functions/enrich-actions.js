@@ -1,4 +1,4 @@
-// Lazy AI enrichment — called AFTER initial actions load for specific suggestions
+// Lazy AI enrichment — generates CONTEXT (what's happening) + ACTION (what to do)
 export default async (req) => {
   if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
 
@@ -7,23 +7,22 @@ export default async (req) => {
     if (!actions?.length) return Response.json({ enriched: [] });
 
     const actionSummary = actions.slice(0, 12).map((a, i) =>
-      `${i}. [${a.priority}] ${a.title} | ${a.subtitle || ""} | ${a.dueTime || ""} | Channel: ${a.channel || ""}`
+      `${i}. [${a.priority}${a.criticalReason ? " — " + a.criticalReason : ""}] ${a.title} | ${a.subtitle || ""} | ${a.dueTime || ""} | Channel: ${a.channel || ""} | Current: ${a.suggestedAction || "none"}`
     ).join("\n");
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 2000,
-        system: `You write specific, actionable suggested actions for Jake Dunlap, CEO of Skaled Consulting. For each action:
+        model: "claude-sonnet-4-20250514", max_tokens: 2500,
+        system: `You write action briefs for Jake Dunlap, CEO of Skaled Consulting. For each action, provide TWO things:
 
-1. State exactly what Jake should DO (not "review" or "follow up" — say "Send Larry the AI GTM framework deck" or "Call Sarah to confirm the Q2 timeline")
-2. If it's an email, write the first sentence of what the email should say
-3. If it's a meeting, state the one thing Jake needs to accomplish in it
-4. If it's a deal update, state exactly what to change and why
+1. CONTEXT (1-2 sentences): What's the situation? What happened? Why does this matter? Use specifics — deal size, how long it's been, what stage, who's involved. This is the backstory.
 
-Be specific. Use names. Reference the deal context. Under 2 sentences each. Plain text, no markdown, no asterisks.`,
-        messages: [{ role: "user", content: `Today is ${new Date().toISOString().split("T")[0]}. Enrich these actions:\n\n${actionSummary}\n\nReturn JSON array: [{ "index": 0, "suggestion": "specific action text" }]` }],
+2. ACTION (1 sentence): Exactly what Jake should do RIGHT NOW. Not "follow up" — say "Send Larry the proposal with Q2 pricing" or "Call Sarah to confirm the $65K is still in her Q2 budget." If it's an email, write the opening line.
+
+Be specific. Use names and dollar amounts from the data. Plain text, no markdown, no asterisks. Keep it tight — a CEO is scanning this in 3 seconds.`,
+        messages: [{ role: "user", content: `Today is ${new Date().toISOString().split("T")[0]}. Write context + action for each:\n\n${actionSummary}\n\nReturn JSON array: [{ "index": 0, "context": "what's happening", "action": "what to do" }]` }],
       }),
     });
 
