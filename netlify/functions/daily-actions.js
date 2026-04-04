@@ -4,7 +4,7 @@ import { getAccessToken } from "./google-auth.js";
 export default async (req) => {
   try {
     const token = await getAccessToken();
-    const actions = { external: [], internal: [], sfdcCleanup: [], dealsAtRisk: [] };
+    const actions = { external: [], internal: [], dealsAtRisk: [] };
 
     // ── 1. Calendar: today + next 2 days ─────────────────────
     const now = new Date();
@@ -384,7 +384,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
             suggestion = `Close date: ${o.CloseDate}. Review and advance.`;
           }
 
-          actions.external.push({
+          actions.dealsAtRisk.push({
             id: `opp-${o.Id}`,
             type: "follow-up",
             priority,
@@ -428,7 +428,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
 
         pastDueOpps.forEach(o => {
           const daysOverdue = Math.floor((now.getTime() - new Date(o.CloseDate).getTime()) / 86400000);
-          actions.sfdcCleanup.push({
+          actions.dealsAtRisk.push({
             id: `opp-${o.Id}`,
             type: "follow-up",
             priority: daysOverdue > 30 ? "critical" : daysOverdue > 14 ? "high" : "medium",
@@ -449,7 +449,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
 
         closingNextWeek.forEach(o => {
           const daysToClose = Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000);
-          actions.sfdcCleanup.push({
+          actions.dealsAtRisk.push({
             id: `opp-${o.Id}`,
             type: "follow-up",
             priority: daysToClose <= 2 ? "critical" : "high",
@@ -465,7 +465,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
         });
 
         // Sort cleanup: past due first (most overdue at top), then closing soon
-        actions.sfdcCleanup.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
+        actions.dealsAtRisk.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
 
         // ── 5. Deals at Risk: close date moved 2+ times or no activity in 10+ days ──
         // (reuses allOpenOpps, accountLastTouch, getRealDaysSince from above)
@@ -535,7 +535,7 @@ Be strict — most emails are FYI. Only flag as NEEDS_ACTION if Jake himself mus
 
     return Response.json(actions);
   } catch (e) {
-    return Response.json({ error: e.message, external: [], internal: [], sfdcCleanup: [], dealsAtRisk: [] }, { status: 500 });
+    return Response.json({ error: e.message, external: [], internal: [], dealsAtRisk: [] }, { status: 500 });
   }
 };
 

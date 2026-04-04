@@ -701,13 +701,12 @@ export default function App() {
           const queueMap = {
             external: [...(liveActions?.external || []), ...customActions.filter(a => a.queue === "external")],
             internal: [...(liveActions?.internal || []), ...customActions.filter(a => a.queue === "internal")],
-            sfdcCleanup: liveActions?.sfdcCleanup || [],
             dealsAtRisk: liveActions?.dealsAtRisk || [],
           };
           let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : [];
           // Remove done/skipped items
           currentActions = currentActions.filter(a => !isInCooldown(a.id));
-          if (actionQueue === "sfdcCleanup" && oppEdits.cleanupSort === "asc") {
+          if (false && oppEdits.cleanupSort === "asc") { // sfdcCleanup removed
             currentActions.sort((a, b) => (a.daysOverdue || 0) - (b.daysOverdue || 0));
           }
           if (oppEdits.priorityFilter) {
@@ -762,7 +761,7 @@ export default function App() {
             {isLive && currentActions.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  {actionQueue === "sfdcCleanup" && (
+                  {false && (
                     <>
                       <span style={{ fontSize: 12, color: "#64748B" }}>Sort:</span>
                       <button style={s.btn(oppEdits.cleanupSort === "asc" ? "#F59E0B" : "#334155")} onClick={() => setOppEdits(d => ({ ...d, cleanupSort: "asc" }))}>Oldest first</button>
