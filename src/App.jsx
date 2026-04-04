@@ -23,6 +23,7 @@ import ExpansionSignals from "./components/ExpansionSignals";
 import RelationshipMap from "./components/RelationshipMap";
 import WinLossPatterns from "./components/WinLossPatterns";
 import BoardReport from "./components/BoardReport";
+import SuggestionCards from "./components/SuggestionCards";
 
 // ── Helpers ────────────────────────────────────────────────────
 const fmt = (n) => "$" + n.toLocaleString();
@@ -604,6 +605,7 @@ export default function App() {
             { key: "internal", label: "Internal", color: "#3B82F6" },
             { key: "sfdcCleanup", label: "SFDC Cleanup", color: "#F59E0B" },
             { key: "dealsAtRisk", label: "Deals at Risk", color: "#EF4444" },
+            { key: "suggestions", label: "AI Suggestions", color: "#8B5CF6" },
           ];
 
           return (
@@ -751,7 +753,18 @@ export default function App() {
               </div>
             )}
 
-            {currentActions.length === 0 && !actionsLoading && (
+            {/* AI Suggestions tab */}
+            {actionQueue === "suggestions" && (
+              <SuggestionCards
+                onAction={(s) => setToast("Action taken")}
+                onDismiss={(id) => {}}
+                onScoreDeal={(d) => setShowDealScore(d)}
+                onEmailDeal={(action) => setShowEmailComposer({ action, mode: "ai" })}
+                onDelegateDeal={(action) => setShowEADelegate(action)}
+              />
+            )}
+
+            {actionQueue !== "suggestions" && currentActions.length === 0 && !actionsLoading && (
               <div style={{ ...s.card, cursor: "default", textAlign: "center", color: "#64748B", padding: 32 }}>
                 {isLive ? "No actions in this queue" : "Loading actions..."}
               </div>
