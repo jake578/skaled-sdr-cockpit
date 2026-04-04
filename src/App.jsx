@@ -1692,12 +1692,14 @@ export default function App() {
       )}
 
       {showDailyBrief && (
-        <DailyBrief onClose={() => setShowDailyBrief(false)} onStart={() => {
-          setShowDailyBrief(false);
-          setView("actions");
-          setActionQueue("external");
-          setOppEdits(d => ({ ...d, priorityFilter: "critical" }));
-        }} />
+        <DailyBrief
+          onClose={() => setShowDailyBrief(false)}
+          onStart={() => { setShowDailyBrief(false); setView("actions"); setActionQueue("external"); setOppEdits(d => ({ ...d, priorityFilter: "critical" })); }}
+          onScoreDeal={(d) => { setShowDailyBrief(false); setShowDealScore(d); }}
+          onEmailDeal={(action) => { setShowDailyBrief(false); setShowEmailComposer({ action, mode: "ai" }); }}
+          onDelegateDeal={(action) => { setShowDailyBrief(false); setShowEADelegate(action); }}
+          onInspectDeal={(d) => { setShowDailyBrief(false); setShowDealInspector(d); }}
+        />
       )}
 
       {showEADelegate && (
