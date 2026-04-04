@@ -150,7 +150,7 @@ export default function DealInspector({ oppId, oppName, onClose }) {
               <div style={styles.section}>
                 <div style={styles.sectionTitle}>Risk Factors</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {data.riskFactors.map((r, i) => (
+                  {(Array.isArray(data.riskFactors) ? data.riskFactors : []).map((r, i) => (
                     <span key={i} style={styles.badge("#EF4444")}>{r}</span>
                   ))}
                 </div>
@@ -162,7 +162,7 @@ export default function DealInspector({ oppId, oppName, onClose }) {
               <div style={styles.section}>
                 <div style={styles.sectionTitle}>Strengths</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {data.strengths.map((s, i) => (
+                  {(Array.isArray(data.strengths) ? data.strengths : []).map((s, i) => (
                     <span key={i} style={styles.badge("#10B981")}>{s}</span>
                   ))}
                 </div>
@@ -170,10 +170,10 @@ export default function DealInspector({ oppId, oppName, onClose }) {
             )}
 
             {/* Stakeholder Gaps */}
-            {data.stakeholderGaps?.length > 0 && (
+            {Array.isArray(data.stakeholderGaps) && data.stakeholderGaps.length > 0 && (
               <div style={styles.warning}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", marginBottom: 6 }}>Stakeholder Gaps</div>
-                {data.stakeholderGaps.map((g, i) => (
+                {(Array.isArray(data.stakeholderGaps) ? data.stakeholderGaps : []).map((g, i) => (
                   <div key={i} style={{ fontSize: 12, color: "#FCA5A5", marginBottom: 2 }}>- {g}</div>
                 ))}
               </div>
@@ -183,7 +183,7 @@ export default function DealInspector({ oppId, oppName, onClose }) {
             {data.nextSteps?.length > 0 && (
               <div style={styles.section}>
                 <div style={styles.sectionTitle}>Next Steps</div>
-                {data.nextSteps.map((step, i) => (
+                {(Array.isArray(data.nextSteps) ? data.nextSteps : []).map((step, i) => (
                   <div key={i} style={styles.listItem}>
                     <div style={styles.stepNum}>{i + 1}</div>
                     <div style={{ fontSize: 13, color: "#E2E8F0", lineHeight: 1.4 }}>{step}</div>
@@ -196,7 +196,7 @@ export default function DealInspector({ oppId, oppName, onClose }) {
             {data.activityTimeline?.length > 0 && (
               <div style={styles.section}>
                 <div style={styles.sectionTitle}>Activity Timeline</div>
-                {data.activityTimeline.map((item, i) => (
+                {(Array.isArray(data.activityTimeline) ? data.activityTimeline : []).map((item, i) => (
                   <div key={i} style={styles.timelineItem}>
                     <div>
                       <div style={{ fontSize: 11, color: "#64748B" }}>{item.date}</div>
