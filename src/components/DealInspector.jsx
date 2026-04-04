@@ -87,20 +87,28 @@ function LoadingSkeleton() {
 
 export default function DealInspector({ oppId, oppName, onClose }) {
   const [data, setData] = useState(null);
+  const [docs, setDocs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch("/.netlify/functions/ai-deal-inspect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ oppId, oppName }),
-    })
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setError("Failed to analyze deal"); setLoading(false); });
+    // Fetch AI analysis and documents in parallel
+    Promise.all([
+      fetch("/.netlify/functions/ai-deal-inspect", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oppId, oppName }),
+      }).then(r => r.json()),
+      fetch("/.netlify/functions/deal-documents", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountName: oppName?.split("—")[0]?.trim() || oppName, oppName }),
+      }).then(r => r.json()).catch(() => null),
+    ]).then(([analysis, documents]) => {
+      setData(analysis);
+      if (documents && !documents.error) setDocs(documents);
+      setLoading(false);
+    }).catch(() => { setError("Failed to analyze deal"); setLoading(false); });
   }, [oppId, oppName]);
 
   return (
@@ -204,6 +212,30 @@ export default function DealInspector({ oppId, oppName, onClose }) {
               <div style={styles.section}>
                 <div style={styles.sectionTitle}>Summary</div>
                 <div style={styles.summary}>{data.summary}</div>
+              </div>
+            )}
+
+            {/* Documents */}
+            {docs && (docs.docs?.length > 0 || docs.decks?.length > 0) && (
+              <div style={styles.section}>
+                <div style={{ ...styles.sectionTitle, color: "#8B5CF6" }}>Deal Documents</div>
+                {docs.documentSummary && (
+                  <div style={{ background: "#1E293B", borderRadius: 6, padding: 10, marginBottom: 8, fontSize: 12, color: "#CBD5E1", lineHeight: 1.5 }}>
+                    {(docs.documentSummary || "").replace(/\*\*/g, "").replace(/\*/g, "")}
+                  </div>
+                )}
+                {docs.decks?.map((d, i) => (
+                  <a key={i} href={d.link} target="_blank" rel="noreferrer" style={{ display: "block", background: "#1E293B", borderRadius: 6, padding: "8px 12px", marginBottom: 4, textDecoration: "none", border: "1px solid #334155" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#F59E0B" }}>{d.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>{d.type === "gamma" ? "Gamma Deck" : "Presentation"} · {d.modified}</div>
+                  </a>
+                ))}
+                {docs.docs?.map((d, i) => (
+                  <a key={i} href={d.link} target="_blank" rel="noreferrer" style={{ display: "block", background: "#1E293B", borderRadius: 6, padding: "8px 12px", marginBottom: 4, textDecoration: "none", border: "1px solid #334155" }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#3B82F6" }}>{d.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748B" }}>Document · {d.modified}</div>
+                  </a>
+                ))}
               </div>
             )}
           </div>

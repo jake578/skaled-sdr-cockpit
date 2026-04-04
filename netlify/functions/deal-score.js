@@ -67,6 +67,22 @@ export default async (req) => {
       }
     } catch {}
 
+    // Google Drive — proposals, SOWs, decks
+    let docContext = "";
+    try {
+      const gtoken = await getAccessToken();
+      if (accountName) {
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name contains '${accountName.replace(/'/g, "")}' and trashed = false`)}&fields=files(id,name,mimeType,modifiedTime)&orderBy=modifiedTime desc&pageSize=5`, { headers: { Authorization: `Bearer ${gtoken}` } });
+        if (res.ok) {
+          const data = await res.json();
+          const files = data.files || [];
+          if (files.length) {
+            docContext = "\nDeal Documents Found:\n" + files.map(f => `- ${f.name} (${f.mimeType?.split(".").pop() || "file"}, modified ${f.modifiedTime?.split("T")[0]})`).join("\n");
+          }
+        }
+      }
+    } catch {}
+
     const chorusCallCount = events.length;
     const stakeholderCount = contacts.length;
     const daysInPipeline = opp.CreatedDate ? Math.floor((now - new Date(opp.CreatedDate)) / 86400000) : 0;
@@ -93,6 +109,7 @@ Engagement Metrics:
 - Chorus calls: ${chorusCallCount}
 - Stakeholders on account: ${stakeholderCount}
 - Contacts: ${contacts.map(c => `${c.Name} (${c.Title || "no title"})`).join(", ") || "None"}
+${docContext}
 `;
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
