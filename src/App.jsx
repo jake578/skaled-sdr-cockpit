@@ -1722,7 +1722,7 @@ export default function App() {
         />
       )}
 
-      {showCashFlow && <CashFlow onClose={() => setShowCashFlow(false)} />}
+      {showCashFlow && <CashFlow onClose={() => setShowCashFlow(false)} onScoreDeal={(d) => { setShowCashFlow(false); setShowDealScore(d); }} onInspectDeal={(d) => { setShowCashFlow(false); setShowDealInspector(d); }} />}
       {showExpansion && <ExpansionSignals onClose={() => setShowExpansion(false)} />}
       {showRelMap && <RelationshipMap accountId={showRelMap.accountId} accountName={showRelMap.accountName} onClose={() => setShowRelMap(null)} />}
       {showWinLoss && <WinLossPatterns onClose={() => setShowWinLoss(false)} />}
