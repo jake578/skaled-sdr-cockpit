@@ -1,4 +1,4 @@
-// Cash Flow Projection — pipeline-to-cash with deal-level drill-down
+// Cash Flow — based on CLOSED WON deals trailing, with revenue spread logic
 export default async (req) => {
   try {
     const cookieHeader = req.headers.get("cookie") || "";
@@ -13,178 +13,138 @@ export default async (req) => {
       return (await res.json()).records || [];
     };
 
-    const quarter = Math.floor(now.getMonth() / 3);
-    const qStart = `${now.getFullYear()}-${String(quarter * 3 + 1).padStart(2, "0")}-01`;
-    const todayStr = now.toISOString().split("T")[0];
+    // Pull all closed won deals from last 12 months
+    const closedWon = await sfdcQuery(`
+      SELECT Id, Name, Account.Name, AccountId, Amount, CloseDate, LeadSource
+      FROM Opportunity WHERE IsWon = true AND CloseDate >= LAST_N_DAYS:365
+      ORDER BY CloseDate DESC
+    `);
 
-    const [openOpps, closedWon, allClosedWon] = await Promise.all([
-      sfdcQuery(`SELECT Id, Name, Account.Name, AccountId, Amount, CloseDate, StageName, Group_Forecast_Category__c, Probability, LastActivityDate FROM Opportunity WHERE IsClosed = false AND Amount > 0 ORDER BY CloseDate ASC`),
-      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= ${qStart} ORDER BY CloseDate DESC`),
-      // Pull last 12 months of closed won to identify recurring vs new deals
-      sfdcQuery(`SELECT AccountId, Amount, CloseDate FROM Opportunity WHERE IsWon = true AND CloseDate >= LAST_N_DAYS:365 ORDER BY CloseDate DESC`),
-    ]);
-
-    // Build recurring account map: accountId → [{ amount, closeDate }]
+    // Build account history for recurring detection
     const accountHistory = {};
-    allClosedWon.forEach(o => {
+    closedWon.forEach(o => {
       if (!o.AccountId) return;
       if (!accountHistory[o.AccountId]) accountHistory[o.AccountId] = [];
-      accountHistory[o.AccountId].push({ amount: o.Amount || 0, month: (o.CloseDate || "").substring(0, 7) });
+      accountHistory[o.AccountId].push({ amount: o.Amount || 0, month: (o.CloseDate || "").substring(0, 7), id: o.Id });
     });
 
-    // Determine if a deal is recurring (same account has multiple closed won with similar amounts)
-    const isRecurringDeal = (opp) => {
-      const history = accountHistory[opp.AccountId] || [];
+    const isRecurring = (o) => {
+      const history = accountHistory[o.AccountId] || [];
       if (history.length < 2) return false;
-      // Check if there are 2+ closed won at similar amounts (within 20%)
-      const amt = opp.Amount || 0;
-      const similarCount = history.filter(h => Math.abs(h.amount - amt) / Math.max(amt, 1) < 0.2).length;
-      return similarCount >= 2;
+      const amt = o.Amount || 0;
+      const similarCount = history.filter(h => h.id !== o.Id && Math.abs(h.amount - amt) / Math.max(amt, 1) < 0.2).length;
+      return similarCount >= 1;
     };
 
-    // Check if account has ANY prior closed won (first deal = new client)
-    const isFirstDeal = (opp) => {
-      const history = accountHistory[opp.AccountId] || [];
-      return history.length === 0;
+    const isFirstDealForAccount = (o) => {
+      const history = accountHistory[o.AccountId] || [];
+      // Is this the earliest deal for this account?
+      const sorted = history.sort((a, b) => a.month.localeCompare(b.month));
+      return sorted.length > 0 && sorted[0].id === o.Id;
     };
 
-    const weights = { "Commit": 0.9, "Best Case": 0.6, "Pipeline": 0.3, "Omitted": 0, "Closed": 1.0 };
-
-    // Build next 6 months with deal-level detail
-    const monthly = [];
-    for (let i = 0; i < 6; i++) {
+    // Build last 12 months + next 3 months (for spread overflow)
+    const months = [];
+    for (let i = -11; i <= 3; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthly.push({ month, committed: 0, bestCase: 0, pipeline: 0, total: 0, deals: [] });
+      months.push({ month, recurring: 0, newClient: 0, newDeal: 0, total: 0, deals: [] });
     }
 
-    // Past due bucket
-    const pastDue = { month: "Past Due", committed: 0, bestCase: 0, pipeline: 0, total: 0, deals: [] };
-
-    openOpps.forEach(o => {
-      if (!o.CloseDate) return;
-      const cat = o.Group_Forecast_Category__c || "Pipeline";
+    // Place revenue into months
+    closedWon.forEach(o => {
       const amount = o.Amount || 0;
-      const w = weights[cat] ?? 0.3;
-      const weighted = Math.round(amount * w);
+      if (!amount || !o.CloseDate) return;
+      const closeMonth = o.CloseDate.substring(0, 7);
+      const closeIdx = months.findIndex(m => m.month === closeMonth);
+      if (closeIdx < 0) return;
+
+      const recurring = isRecurring(o);
+      const firstDeal = isFirstDealForAccount(o);
 
       const deal = {
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
-        amount, weighted, stage: o.StageName || "—",
-        category: cat, closeDate: o.CloseDate,
-        probability: o.Probability || 0,
-        lastActivity: o.LastActivityDate || "—",
-        pastDue: o.CloseDate < todayStr,
+        amount, closeDate: o.CloseDate, source: o.LeadSource || "—",
       };
 
-      if (o.CloseDate < todayStr) {
-        pastDue.deals.push(deal);
-        if (cat === "Commit") pastDue.committed += weighted;
-        else if (cat === "Best Case") pastDue.bestCase += weighted;
-        else pastDue.pipeline += weighted;
-        pastDue.total += weighted;
-        return;
-      }
-
-      const oppMonth = o.CloseDate.substring(0, 7);
-      const closeMonthIdx = monthly.findIndex(m => m.month === oppMonth);
-      if (closeMonthIdx < 0) return;
-
-      const recurring = isRecurringDeal(o);
-      const firstDeal = isFirstDeal(o);
-
       if (recurring) {
-        // RECURRING: same account, similar amount month over month
-        // Count full amount in close month — this is monthly retainer revenue
-        const m = monthly[closeMonthIdx];
-        m.deals.push({ ...deal, revenueType: "recurring", spreadNote: "Recurring — full amount" });
-        if (cat === "Commit") m.committed += weighted;
-        else if (cat === "Best Case") m.bestCase += weighted;
-        else m.pipeline += weighted;
-        m.total += weighted;
-      } else if (firstDeal) {
-        // NEW CLIENT: first closed won for this account
-        // Spread over 2.5 months (40/35/25)
-        const splits = [0.4, 0.35, 0.25];
-        for (let s = 0; s < 3; s++) {
-          const mIdx = closeMonthIdx + s;
-          if (mIdx >= monthly.length) break;
-          const m = monthly[mIdx];
-          const portion = Math.round(weighted * splits[s]);
-          const pctLabel = s === 0 ? "40%" : s === 1 ? "35%" : "25%";
-          m.deals.push({ ...deal, weighted: portion, revenueType: "new_client", spreadNote: `New client — ${pctLabel} of total`, spreadPct: pctLabel, isSpread: s > 0 });
-          if (cat === "Commit") m.committed += portion;
-          else if (cat === "Best Case") m.bestCase += portion;
-          else m.pipeline += portion;
-          m.total += portion;
-        }
+        // Recurring: full amount in close month
+        months[closeIdx].recurring += amount;
+        months[closeIdx].total += amount;
+        months[closeIdx].deals.push({ ...deal, revenueType: "recurring", revenueInMonth: amount, spreadNote: "Recurring — full amount" });
       } else {
-        // EXISTING CLIENT, NEW DEAL: has history but different amount (expansion, new project)
-        // Spread over 2.5 months
+        // New deal (first for account or new engagement): spread 40/35/25
         const splits = [0.4, 0.35, 0.25];
+        const type = firstDeal ? "new_client" : "new_deal";
+        const typeLabel = firstDeal ? "New client" : "New engagement";
+
         for (let s = 0; s < 3; s++) {
-          const mIdx = closeMonthIdx + s;
-          if (mIdx >= monthly.length) break;
-          const m = monthly[mIdx];
-          const portion = Math.round(weighted * splits[s]);
+          const mIdx = closeIdx + s;
+          if (mIdx >= months.length) break;
+          const portion = Math.round(amount * splits[s]);
           const pctLabel = s === 0 ? "40%" : s === 1 ? "35%" : "25%";
-          m.deals.push({ ...deal, weighted: portion, revenueType: "new_deal", spreadNote: `New engagement — ${pctLabel} of total`, spreadPct: pctLabel, isSpread: s > 0 });
-          if (cat === "Commit") m.committed += portion;
-          else if (cat === "Best Case") m.bestCase += portion;
-          else m.pipeline += portion;
-          m.total += portion;
+
+          if (type === "new_client") months[mIdx].newClient += portion;
+          else months[mIdx].newDeal += portion;
+          months[mIdx].total += portion;
+          months[mIdx].deals.push({
+            ...deal, revenueType: type, revenueInMonth: portion,
+            spreadNote: `${typeLabel} — ${pctLabel} of $${amount.toLocaleString()}`,
+            spreadPct: pctLabel, isSpread: s > 0,
+          });
         }
       }
     });
 
-    // Unweighted totals per month
-    monthly.forEach(m => {
-      m.unweightedTotal = m.deals.reduce((s, d) => s + d.amount, 0);
-      m.dealCount = m.deals.length;
-      // Sort deals: Commit first, then by amount
-      const catOrder = { "Commit": 0, "Best Case": 1, "Pipeline": 2, "Omitted": 3 };
-      m.deals.sort((a, b) => (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9) || b.amount - a.amount);
+    // Trim to relevant months (last 6 trailing + current + 2 forward for spread)
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const relevantMonths = months.filter(m => {
+      // Show last 6 months + current + 2 months forward
+      return m.month >= months.find(x => x.month <= currentMonth && months.indexOf(x) >= months.length - 9)?.month;
+    }).slice(-9);
+
+    // Quarterly summaries
+    const quarterSummary = {};
+    months.forEach(m => {
+      const [y, mo] = m.month.split("-").map(Number);
+      const q = `Q${Math.floor((mo - 1) / 3) + 1} ${y}`;
+      if (!quarterSummary[q]) quarterSummary[q] = { recurring: 0, newClient: 0, newDeal: 0, total: 0, dealCount: 0 };
+      quarterSummary[q].recurring += m.recurring;
+      quarterSummary[q].newClient += m.newClient;
+      quarterSummary[q].newDeal += m.newDeal;
+      quarterSummary[q].total += m.total;
+      quarterSummary[q].dealCount += m.deals.filter(d => !d.isSpread).length;
     });
 
-    pastDue.unweightedTotal = pastDue.deals.reduce((s, d) => s + d.amount, 0);
-    pastDue.dealCount = pastDue.deals.length;
-    pastDue.deals.sort((a, b) => b.amount - a.amount);
+    // Trailing totals
+    const trailing3 = relevantMonths.slice(-4, -1).reduce((s, m) => s + m.total, 0);
+    const trailing6 = relevantMonths.slice(-7, -1).reduce((s, m) => s + m.total, 0);
+    const currentMonthTotal = relevantMonths.find(m => m.month === currentMonth)?.total || 0;
 
-    // Rolling summaries
-    const d30 = new Date(now.getTime() + 30 * 86400000).toISOString().split("T")[0];
-    const d60 = new Date(now.getTime() + 60 * 86400000).toISOString().split("T")[0];
-    const d90 = new Date(now.getTime() + 90 * 86400000).toISOString().split("T")[0];
-
-    const weightedSum = (maxDate) => Math.round(openOpps.filter(o => o.CloseDate && o.CloseDate >= todayStr && o.CloseDate <= maxDate).reduce((s, o) => s + (o.Amount || 0) * (weights[o.Group_Forecast_Category__c] ?? 0.3), 0));
-    const unweightedSum = (maxDate) => Math.round(openOpps.filter(o => o.CloseDate && o.CloseDate >= todayStr && o.CloseDate <= maxDate).reduce((s, o) => s + (o.Amount || 0), 0));
-
-    // Category totals
-    const categoryTotals = {};
-    openOpps.forEach(o => {
-      const cat = o.Group_Forecast_Category__c || "Pipeline";
-      if (!categoryTotals[cat]) categoryTotals[cat] = { count: 0, total: 0, weighted: 0 };
-      categoryTotals[cat].count++;
-      categoryTotals[cat].total += o.Amount || 0;
-      categoryTotals[cat].weighted += Math.round((o.Amount || 0) * (weights[cat] ?? 0.3));
-    });
+    // Total by type
+    const totalRecurring = Math.round(closedWon.filter(o => isRecurring(o)).reduce((s, o) => s + (o.Amount || 0), 0));
+    const totalNew = Math.round(closedWon.filter(o => !isRecurring(o)).reduce((s, o) => s + (o.Amount || 0), 0));
 
     return Response.json({
-      monthly: pastDue.deals.length > 0 ? [pastDue, ...monthly] : monthly,
+      monthly: relevantMonths.map(m => ({
+        ...m,
+        recurring: Math.round(m.recurring),
+        newClient: Math.round(m.newClient),
+        newDeal: Math.round(m.newDeal),
+        total: Math.round(m.total),
+        dealCount: m.deals.filter(d => !d.isSpread).length,
+      })),
       summary: {
-        next30d: weightedSum(d30), next60d: weightedSum(d60), next90d: weightedSum(d90),
-        next30dRaw: unweightedSum(d30), next60dRaw: unweightedSum(d60), next90dRaw: unweightedSum(d90),
-        totalProjected: monthly.reduce((s, m) => s + m.total, 0),
-        totalUnweighted: monthly.reduce((s, m) => s + m.unweightedTotal, 0),
-        totalDeals: openOpps.length,
-        pastDueCount: pastDue.deals.length,
-        pastDueAmount: pastDue.unweightedTotal,
+        trailing3m: Math.round(trailing3),
+        trailing6m: Math.round(trailing6),
+        currentMonth: Math.round(currentMonthTotal),
+        totalDeals: closedWon.length,
+        totalRevenue: Math.round(closedWon.reduce((s, o) => s + (o.Amount || 0), 0)),
+        totalRecurring,
+        totalNew,
+        avgDealSize: closedWon.length > 0 ? Math.round(closedWon.reduce((s, o) => s + (o.Amount || 0), 0) / closedWon.length) : 0,
       },
-      categoryTotals: Object.entries(categoryTotals).map(([cat, d]) => ({ category: cat, ...d, weight: weights[cat] ?? 0.3 })).sort((a, b) => b.weighted - a.weighted),
-      closedThisQuarter: {
-        count: closedWon.length,
-        total: Math.round(closedWon.reduce((s, o) => s + (o.Amount || 0), 0)),
-        deals: closedWon.slice(0, 10).map(o => ({ id: o.Id, name: o.Name, account: o.Account?.Name || "—", amount: o.Amount || 0, closeDate: o.CloseDate })),
-      },
+      quarters: Object.entries(quarterSummary).map(([label, data]) => ({ label, ...data, recurring: Math.round(data.recurring), newClient: Math.round(data.newClient), newDeal: Math.round(data.newDeal), total: Math.round(data.total) })).sort((a, b) => a.label.localeCompare(b.label)),
     });
   } catch (e) {
     return Response.json({ error: e.message }, { status: 500 });
