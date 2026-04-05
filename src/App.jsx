@@ -686,7 +686,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("dealsAtRisk"); setOppEdits(d => ({ ...d, priorityFilter: "critical" })); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("dealsAtRisk"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
           <div style={{ ...s.metricVal, color: liveMetrics?.pastDueDeals > 0 ? "#EF4444" : "#10B981" }}>
             {liveMetrics?.pastDueDeals ?? "..."}
           </div>
