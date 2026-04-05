@@ -23,15 +23,27 @@ export default async (req) => {
       const subject = event.summary || "";
       const subjectLower = subject.toLowerCase();
 
-      // Skip personal blocks
+      // Skip personal/non-business events
       if (subjectLower.includes("lunch") || subjectLower.includes("block") ||
           subjectLower.includes("focus time") || subjectLower.includes("ooo") ||
-          subjectLower.includes("out of office") || subjectLower.includes("reminder")) return;
+          subjectLower.includes("out of office") || subjectLower.includes("reminder") ||
+          subjectLower.includes("birthday") || subjectLower.includes("anniversary") ||
+          subjectLower.includes("doctor") || subjectLower.includes("dentist") ||
+          subjectLower.includes("pickup") || subjectLower.includes("drop off") ||
+          subjectLower.includes("gym") || subjectLower.includes("workout") ||
+          subjectLower.includes("dinner") || subjectLower.includes("brunch") ||
+          subjectLower.includes("haircut") || subjectLower.includes("personal") ||
+          subjectLower.includes("flight") || subjectLower.includes("hotel")) return;
 
-      // Jenni Weber: skip ALL calendar events from her
+      // Skip personal contacts — Jenni Dunlap/Weber and family
       const organizer = (event.organizer?.email || "").toLowerCase();
       const allEmails = (event.attendees || []).map(a => (a.email || "").toLowerCase()).join(" ") + " " + organizer;
-      if (allEmails.includes("jenni")) return;
+      const allNames = (event.attendees || []).map(a => (a.displayName || "").toLowerCase()).join(" ");
+      if (allEmails.includes("jenni") || allNames.includes("jenni")) return;
+
+      // Skip events with only you (no other attendees = personal reminder)
+      const otherAttendees = (event.attendees || []).filter(a => !a.self);
+      if (otherAttendees.length === 0) return;
 
       const start = event.start?.dateTime || event.start?.date || "";
       const dateStr = start ? start.split("T")[0] : "—";
