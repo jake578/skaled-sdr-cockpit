@@ -19,9 +19,9 @@ export default async (req) => {
     const fmt = (n) => "$" + (n || 0).toLocaleString();
 
     const [openOpps, newLeads, pastDue] = await Promise.all([
-      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c, NextStep FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') ORDER BY CloseDate ASC LIMIT 50`),
+      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c, NextStep, Owner.Name FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') ORDER BY CloseDate ASC LIMIT 50`),
       sfdcQuery(`SELECT Id, Name, Company, Title, Status, CreatedDate, LeadSource, Industry, Description FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`),
-      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 30`),
+      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c, Owner.Name FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 30`),
     ]);
 
     // Past due deals
@@ -37,7 +37,7 @@ export default async (req) => {
         id: `opp-${o.Id}`, type: "follow-up", priority,
         criticalReason: priority === "critical" ? `${acct}: ${amt || "Deal"} is ${daysOverdue} days past close date — polluting your forecast` : null,
         title: o.Name,
-        subtitle: `${acct} · ${o.StageName}${amt ? " · " + amt : ""}`,
+        subtitle: `${acct} · ${o.Owner?.Name || "—"} · ${o.StageName}${amt ? " · " + amt : ""}`,
         context: `The ${acct} deal was supposed to close on ${o.CloseDate} (${daysOverdue} days ago). It's still sitting in ${o.StageName} stage${amt ? " with " + amt + " showing in pipeline" : ""}. ${daysOverdue > 30 ? "This is over a month past due and is making your pipeline inaccurate." : "This needs a new close date or should be closed lost."}`,
         channel: "salesforce",
         dueTime: `${daysOverdue}d overdue`,
@@ -63,7 +63,7 @@ export default async (req) => {
           id: `opp-${o.Id}`, type: "follow-up", priority: "critical",
           criticalReason: `${acct}: ${amt || "Deal"} closes ${daysToClose === 0 ? "TODAY" : "in " + daysToClose + " day" + (daysToClose > 1 ? "s" : "")}`,
           title: o.Name,
-          subtitle: `${acct} · ${o.StageName}${amt ? " · " + amt : ""}`,
+          subtitle: `${acct} · ${o.Owner?.Name || "—"} · ${o.StageName}${amt ? " · " + amt : ""}`,
           context: `${acct} deal is ${daysToClose === 0 ? "due to close TODAY" : "closing in " + daysToClose + " days"}. Currently in ${o.StageName} stage${amt ? " at " + amt : ""}. ${o.Group_Forecast_Category__c === "Commit" ? "This is in Commit — it should close." : o.Group_Forecast_Category__c === "Best Case" ? "This is Best Case — there's risk it slips." : "Forecast category: " + (o.Group_Forecast_Category__c || "not set") + "."}${o.NextStep ? " Next step: " + o.NextStep : ""}`,
           channel: "salesforce",
           dueTime: daysToClose === 0 ? "TODAY" : `${daysToClose}d left`,
@@ -75,7 +75,7 @@ export default async (req) => {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,
-          subtitle: `${acct} · ${o.StageName}${amt ? " · " + amt : ""}`,
+          subtitle: `${acct} · ${o.Owner?.Name || "—"} · ${o.StageName}${amt ? " · " + amt : ""}`,
           context: `${acct} deal closes in ${daysToClose} days (${o.CloseDate}). ${o.StageName} stage${amt ? ", " + amt : ""}. ${o.NextStep ? "Next step: " + o.NextStep : "No next step defined — this deal may slip."}`,
           channel: "salesforce",
           dueTime: `${daysToClose}d left`,
@@ -87,7 +87,7 @@ export default async (req) => {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,
-          subtitle: `${acct} · ${o.StageName}${amt ? " · " + amt : ""}`,
+          subtitle: `${acct} · ${o.Owner?.Name || "—"} · ${o.StageName}${amt ? " · " + amt : ""}`,
           context: `No logged SFDC activity with ${acct} in ${daysSince} days. ${o.StageName} stage${amt ? " with " + amt + " at risk" : ""}. ${daysSince > 30 ? "This deal is going cold — it needs immediate attention or should be closed." : "Engagement is fading — re-engage before it goes dead."}`,
           channel: "salesforce",
           dueTime: `${daysSince}d silent`,

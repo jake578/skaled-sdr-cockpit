@@ -204,11 +204,11 @@ export default function App() {
     const timer = setTimeout(() => {
       setSfdcLoading(true);
       Promise.all([
-        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
+        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, Probability, CloseDate, LastActivityDate, CreatedDate, LeadSource, Group_Forecast_Category__c, Owner.Name FROM Opportunity WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 50`),
         sfdc.query(`SELECT Id, Subject, Type, StartDateTime, CreatedDate, Who.Name, What.Name FROM Event ORDER BY StartDateTime DESC LIMIT 200`),
         sfdc.query(`SELECT Id, Name, Industry, NumberOfEmployees, Type FROM Account ORDER BY CreatedDate DESC LIMIT 50`),
         sfdc.query(`SELECT Id, Name, Company, Title, Status, LeadSource, CreatedDate FROM Lead WHERE IsConverted = false ORDER BY CreatedDate DESC LIMIT 50`),
-        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
+        sfdc.query(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LeadSource, Group_Forecast_Category__c, Owner.Name FROM Opportunity WHERE IsWon = true AND CloseDate >= THIS_QUARTER ORDER BY CloseDate DESC LIMIT 50`),
     ]).then(([opps, events, accounts, leads, wonOpps]) => {
       if (opps && opps.length) {
         const mapped = opps.map(o => ({
@@ -218,7 +218,7 @@ export default function App() {
           probability: o.Probability || 0, closeDate: o.CloseDate || "—",
           lastActivity: o.LastActivityDate || "—", nextStep: "—",
           daysInStage: o.CreatedDate ? Math.floor((Date.now() - new Date(o.CreatedDate).getTime()) / 86400000) : 0,
-          source: o.LeadSource || "—",
+          source: o.LeadSource || "—", owner: o.Owner?.Name || "—",
         }));
         setLiveOpps(mapped);
         try { localStorage.setItem("cockpit_opps_cache", JSON.stringify(mapped)); } catch {}
@@ -279,7 +279,7 @@ export default function App() {
       if (wonOpps && wonOpps.length) setClosedWonOpps(wonOpps.map(o => ({
         id: o.Id, name: o.Name, account: o.Account?.Name || "—",
         amount: o.Amount || 0, closeDate: o.CloseDate || "—",
-        source: o.LeadSource || "—", forecastCategory: o.Group_Forecast_Category__c || "—",
+        source: o.LeadSource || "—", forecastCategory: o.Group_Forecast_Category__c || "—", owner: o.Owner?.Name || "—",
       })));
       setSfdcLoading(false);
     });
@@ -1406,7 +1406,7 @@ export default function App() {
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
                           <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>
-                            {opp.contact} · {opp.source}
+                            {opp.owner && opp.owner !== "—" ? opp.owner + " · " : ""}{opp.source}
                           </div>
                         </div>
                       </div>
@@ -1539,7 +1539,7 @@ export default function App() {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
-                          <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>{opp.account} · {opp.source}</div>
+                          <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>{opp.account}{opp.owner && opp.owner !== "—" ? " · " + opp.owner : ""} · {opp.source}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div style={{ fontSize: 18, fontWeight: 700, color: "#10B981" }}>{fmt(opp.amount)}</div>
