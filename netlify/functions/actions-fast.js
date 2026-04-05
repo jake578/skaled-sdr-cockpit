@@ -26,7 +26,8 @@ export default async (req) => {
 
     // Past due deals
     pastDue.forEach(o => {
-      if (!o.Amount || o.Amount === 0) return; // Skip deals with no amount
+      if (!o.Amount || o.Amount === 0) return;
+      if ((o.Group_Forecast_Category__c || "").toLowerCase() === "pipeline") return;
       const daysOverdue = Math.floor((now - new Date(o.CloseDate)) / 86400000);
       const amt = fmt(o.Amount);
       const acct = o.Account?.Name || "Unknown";
@@ -52,8 +53,9 @@ export default async (req) => {
       const amt = o.Amount ? fmt(o.Amount) : null;
       const acct = o.Account?.Name || "Unknown";
 
-      // Only surface deals with real money — skip opps with no amount
+      // Skip $0 deals and Pipeline forecast category
       if (!o.Amount || o.Amount === 0) return;
+      if ((o.Group_Forecast_Category__c || "").toLowerCase() === "pipeline") return;
 
       // Closing in 3 days or less
       if (daysToClose !== null && daysToClose <= 3 && daysToClose >= 0) {

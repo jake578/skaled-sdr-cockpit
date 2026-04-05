@@ -381,11 +381,15 @@ Be VERY strict. 70%+ of emails should be FYI_ONLY. Only NEEDS_ACTION if Jake ign
 
         // Stalled/upcoming opps — only show deals with clear reasons WHY they need attention
         allOpenOpps.forEach(o => {
+          // Skip $0 and Pipeline forecast category
+          if (!o.Amount || o.Amount === 0) return;
+          if ((o.Group_Forecast_Category__c || "").toLowerCase() === "pipeline") return;
+
           const daysSinceActivity = getRealDaysSince(o);
           const daysToClose = o.CloseDate ? Math.floor((new Date(o.CloseDate).getTime() - now.getTime()) / 86400000) : null;
           const acctName = (o.Account?.Name || "").toLowerCase();
           const hasRealTouch = !!accountLastTouch[acctName];
-          const amt = o.Amount ? "$" + o.Amount.toLocaleString() : null;
+          const amt = "$" + o.Amount.toLocaleString();
           const acct = o.Account?.Name || "Unknown";
 
           // Skip deals with no clear reason to surface
