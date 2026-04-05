@@ -45,6 +45,12 @@ export default async (req) => {
       const otherAttendees = (event.attendees || []).filter(a => !a.self);
       if (otherAttendees.length === 0) return;
 
+      // Skip 1:1s with Wendy — only show if other people are on the invite
+      const nonSkaledAttendees = otherAttendees.filter(a => !(a.email || "").includes("skaled.com"));
+      const hasWendy = allEmails.includes("wendy") || allNames.includes("wendy");
+      if (hasWendy && otherAttendees.length === 1) return; // Just you + Wendy, skip
+      if (hasWendy && nonSkaledAttendees.length === 0) return; // Wendy + only Skaled people, skip
+
       const start = event.start?.dateTime || event.start?.date || "";
       const dateStr = start ? start.split("T")[0] : "—";
       const timeStr = event.start?.dateTime
