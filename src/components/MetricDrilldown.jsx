@@ -351,6 +351,11 @@ export default function MetricDrilldown({ title, data, type, onClose, onDealClic
           {type === "leads" && items.map((l, i) => renderLeadRow(l, i))}
         </div>
 
+        {/* Analytics Summary Panel */}
+        {(type === "pipeline" || type === "won" || type === "pastdue") && items.length > 0 && (
+          <AnalyticsSummary items={items} type={type} />
+        )}
+
         {/* Footer Summary */}
         {(type === "pipeline" || type === "won" || type === "pastdue") && items.length > 0 && (
           <div style={{
@@ -374,6 +379,379 @@ export default function MetricDrilldown({ title, data, type, onClose, onDealClic
             <div style={{ fontSize: 12, fontWeight: 700, color: "#F1F5F9" }}>Total: {fmt(totalAmount)}</div>
           </div>
         )}
+
+        {/* Leads Summary */}
+        {type === "leads" && items.length > 0 && (
+          <div style={{
+            padding: "10px 20px", borderTop: "1px solid #1E293B", flexShrink: 0, background: "#0F172A",
+          }}>
+            <LeadsSummary items={items} />
+          </div>
+        )}
+
+        {/* Meetings Summary */}
+        {type === "meetings" && items.length > 0 && (
+          <div style={{
+            padding: "10px 20px", borderTop: "1px solid #1E293B", flexShrink: 0, background: "#0F172A",
+            display: "flex", justifyContent: "space-between",
+          }}>
+            <span style={{ fontSize: 11, color: "#64748B" }}>{items.length} meetings</span>
+            <span style={{ fontSize: 11, color: "#3B82F6" }}>
+              {items.filter(m => m.attendees?.length).reduce((s, m) => s + m.attendees.length, 0)} total attendees
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Analytics Summary for deal lists ────────────────────────────
+function AnalyticsSummary({ items, type }) {
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  const total = items.reduce((s, d) => s + (d.amount || 0), 0);
+  const avg = items.length > 0 ? total / items.length : 0;
+  const pastDueCount = items.filter(d => isPastDue(d.closeDate)).length;
+  const avgProbability = items.length > 0 ? items.reduce((s, d) => s + (d.probability || 0), 0) / items.length : 0;
+  const weighted = items.reduce((s, d) => s + (d.amount || 0) * (d.probability || 0) / 100, 0);
+
+  // Stage distribution
+  const stageDistribution = {};
+  items.forEach(d => {
+    const stage = d.stage || "Unknown";
+    if (!stageDistribution[stage]) stageDistribution[stage] = { count: 0, amount: 0 };
+    stageDistribution[stage].count++;
+    stageDistribution[stage].amount += d.amount || 0;
+  });
+
+  // Source distribution
+  const sourceDistribution = {};
+  items.forEach(d => {
+    const source = d.source || "Unknown";
+    if (!sourceDistribution[source]) sourceDistribution[source] = { count: 0, amount: 0 };
+    sourceDistribution[source].count++;
+    sourceDistribution[source].amount += d.amount || 0;
+  });
+
+  // Close date distribution (by month)
+  const monthDistribution = {};
+  items.forEach(d => {
+    if (!d.closeDate || d.closeDate === "—") return;
+    try {
+      const m = new Date(d.closeDate).toLocaleString("en-US", { month: "short", year: "2-digit" });
+      if (!monthDistribution[m]) monthDistribution[m] = { count: 0, amount: 0 };
+      monthDistribution[m].count++;
+      monthDistribution[m].amount += d.amount || 0;
+    } catch {}
+  });
+
+  return (
+    <div style={{ borderTop: "1px solid #1E293B", flexShrink: 0 }}>
+      <div
+        onClick={() => setShowAnalytics(!showAnalytics)}
+        style={{
+          padding: "8px 20px", cursor: "pointer", display: "flex",
+          justifyContent: "space-between", alignItems: "center",
+          background: "#0F172A",
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: "#94A3B8" }}>Analytics</span>
+        <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showAnalytics ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+      </div>
+
+      {showAnalytics && (
+        <div style={{ padding: "0 20px 12px", background: "#0F172A" }}>
+          {/* Key stats row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
+            {[
+              { label: "Avg Deal", value: fmt(avg), color: "#F1F5F9" },
+              { label: "Weighted", value: fmt(weighted), color: "#10B981" },
+              { label: "Avg Prob", value: `${avgProbability.toFixed(0)}%`, color: avgProbability >= 50 ? "#10B981" : "#F59E0B" },
+              { label: "Past Due", value: pastDueCount, color: pastDueCount > 0 ? "#EF4444" : "#10B981" },
+              { label: "Total Deals", value: items.length, color: "#3B82F6" },
+            ].map((s, i) => (
+              <div key={i} style={{ background: "#1E293B", borderRadius: 4, padding: "6px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{s.value}</div>
+                <div style={{ fontSize: 8, color: "#64748B", textTransform: "uppercase", marginTop: 1 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Stage distribution */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>By Stage</div>
+            {Object.entries(stageDistribution).sort((a, b) => b[1].amount - a[1].amount).slice(0, 5).map(([stage, data]) => (
+              <div key={stage} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                <span style={{ fontSize: 10, color: "#CBD5E1", width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stage}</span>
+                <div style={{ flex: 1, height: 4, background: "#1E293B", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${(data.amount / total) * 100}%`, height: "100%", background: "#3B82F6", borderRadius: 2 }} />
+                </div>
+                <span style={{ fontSize: 10, color: "#94A3B8", width: 60, textAlign: "right" }}>{fmt(data.amount)}</span>
+                <span style={{ fontSize: 9, color: "#64748B", width: 20, textAlign: "right" }}>{data.count}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Source distribution */}
+          {Object.keys(sourceDistribution).length > 1 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>By Source</div>
+              {Object.entries(sourceDistribution).sort((a, b) => b[1].amount - a[1].amount).slice(0, 4).map(([source, data]) => (
+                <div key={source} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 10, color: "#CBD5E1", width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{source}</span>
+                  <div style={{ flex: 1, height: 4, background: "#1E293B", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${(data.amount / total) * 100}%`, height: "100%", background: "#8B5CF6", borderRadius: 2 }} />
+                  </div>
+                  <span style={{ fontSize: 10, color: "#94A3B8", width: 60, textAlign: "right" }}>{fmt(data.amount)}</span>
+                  <span style={{ fontSize: 9, color: "#64748B", width: 20, textAlign: "right" }}>{data.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Monthly close distribution */}
+          {Object.keys(monthDistribution).length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>By Close Month</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {Object.entries(monthDistribution).slice(0, 6).map(([month, data]) => (
+                  <div key={month} style={{
+                    flex: "1 1 0", background: "#1E293B", borderRadius: 4, padding: "4px 6px", textAlign: "center",
+                  }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#F1F5F9" }}>{fmt(data.amount)}</div>
+                    <div style={{ fontSize: 8, color: "#64748B", marginTop: 1 }}>{month}</div>
+                    <div style={{ fontSize: 8, color: "#64748B" }}>{data.count} deals</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Leads Summary ───────────────────────────────────────────────
+function LeadsSummary({ items }) {
+  // Status distribution
+  const statusDist = {};
+  items.forEach(l => {
+    const status = l.status || "Unknown";
+    statusDist[status] = (statusDist[status] || 0) + 1;
+  });
+
+  // Source distribution
+  const sourceDist = {};
+  items.forEach(l => {
+    const source = l.source || "Unknown";
+    sourceDist[source] = (sourceDist[source] || 0) + 1;
+  });
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#64748B" }}>{items.length} leads</span>
+        <span style={{ color: "#334155" }}>|</span>
+        {Object.entries(statusDist).map(([status, count]) => (
+          <span key={status} style={{ fontSize: 10 }}>
+            <span style={{ color: STATUS_COLORS[status] || "#64748B", fontWeight: 600 }}>{status}:</span>
+            <span style={{ color: "#E2E8F0", marginLeft: 3 }}>{count}</span>
+          </span>
+        ))}
+        <span style={{ flex: 1 }} />
+        {Object.entries(sourceDist).slice(0, 3).map(([source, count]) => (
+          <span key={source} style={{ fontSize: 10, color: "#64748B" }}>
+            {source}: {count}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Pipeline Velocity Analysis ──────────────────────────────────
+export function PipelineVelocity({ deals }) {
+  const [showVelocity, setShowVelocity] = useState(false);
+  const [hoveredDeal, setHoveredDeal] = useState(null);
+
+  if (!deals || deals.length === 0) return null;
+
+  // Calculate velocity metrics
+  const withDays = deals.filter(d => d.daysInStage > 0 || d.createdDate);
+  const avgDaysInPipeline = withDays.length > 0
+    ? (withDays.reduce((s, d) => s + (d.daysInStage || 0), 0) / withDays.length).toFixed(0)
+    : "—";
+
+  // Pipeline velocity = (# deals * avg deal size * win rate) / avg sales cycle
+  const totalPipeline = deals.reduce((s, d) => s + (d.amount || 0), 0);
+  const avgDealSize = deals.length > 0 ? totalPipeline / deals.length : 0;
+  const avgProbability = deals.length > 0 ? deals.reduce((s, d) => s + (d.probability || 0), 0) / deals.length : 0;
+  const avgCycle = parseInt(avgDaysInPipeline) || 30;
+  const velocity = avgCycle > 0 ? (deals.length * avgDealSize * (avgProbability / 100)) / avgCycle : 0;
+
+  // Speed categories
+  const fast = deals.filter(d => (d.daysInStage || 0) <= 30).length;
+  const moderate = deals.filter(d => (d.daysInStage || 0) > 30 && (d.daysInStage || 0) <= 60).length;
+  const slow = deals.filter(d => (d.daysInStage || 0) > 60).length;
+
+  // Stage progression analysis
+  const stageOrder = ["Prospecting", "Qualification", "Needs Analysis", "Value Proposition", "Proposal/Price Quote", "Negotiation/Review"];
+  const stageIndex = (stage) => {
+    const idx = stageOrder.findIndex(s => stage?.includes(s));
+    return idx >= 0 ? idx : 0;
+  };
+
+  // Deals sorted by velocity (days per stage)
+  const byVelocity = [...deals].sort((a, b) => (a.daysInStage || 0) - (b.daysInStage || 0));
+
+  return (
+    <div style={{ marginTop: 12, padding: "0 20px 12px", background: "#0F172A" }}>
+      <div
+        onClick={() => setShowVelocity(!showVelocity)}
+        style={{
+          cursor: "pointer", display: "flex", justifyContent: "space-between",
+          alignItems: "center", padding: "8px 0",
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: "#94A3B8" }}>Pipeline Velocity</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "#10B981", fontWeight: 600 }}>{fmt(Math.round(velocity))}/day</span>
+          <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showVelocity ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+        </div>
+      </div>
+
+      {showVelocity && (
+        <div>
+          {/* Velocity metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 }}>
+            {[
+              { label: "Velocity", value: `${fmt(Math.round(velocity))}/d`, color: "#10B981" },
+              { label: "Avg Cycle", value: `${avgDaysInPipeline}d`, color: parseInt(avgDaysInPipeline) <= 45 ? "#10B981" : "#F59E0B" },
+              { label: "Avg Deal", value: fmt(avgDealSize), color: "#3B82F6" },
+              { label: "Avg Prob", value: `${avgProbability.toFixed(0)}%`, color: avgProbability >= 50 ? "#10B981" : "#F59E0B" },
+            ].map((m, i) => (
+              <div key={i} style={{ background: "#1E293B", borderRadius: 4, padding: "6px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: m.color }}>{m.value}</div>
+                <div style={{ fontSize: 8, color: "#64748B", textTransform: "uppercase" }}>{m.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Speed distribution */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 10, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Deal Speed Distribution</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[
+                { label: "Fast (<30d)", count: fast, color: "#10B981" },
+                { label: "Moderate (30-60d)", count: moderate, color: "#F59E0B" },
+                { label: "Slow (60d+)", count: slow, color: "#EF4444" },
+              ].map((s, i) => (
+                <div key={i} style={{
+                  flex: 1, background: s.color + "10", borderRadius: 4, padding: "6px 8px",
+                  textAlign: "center", border: `1px solid ${s.color}20`,
+                }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: s.color }}>{s.count}</div>
+                  <div style={{ fontSize: 9, color: "#64748B" }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Fastest and slowest deals */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 10, color: "#10B981", marginBottom: 4, fontWeight: 600 }}>Fastest Moving</div>
+              {byVelocity.slice(0, 3).map((d, i) => (
+                <div
+                  key={i}
+                  onMouseEnter={() => setHoveredDeal(`fast-${i}`)}
+                  onMouseLeave={() => setHoveredDeal(null)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", padding: "3px 6px",
+                    borderRadius: 3, fontSize: 10,
+                    background: hoveredDeal === `fast-${i}` ? "#1E293B" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ color: "#CBD5E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
+                    {strip(d.name)}
+                  </span>
+                  <span style={{ color: "#10B981", fontWeight: 600 }}>{d.daysInStage || 0}d</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "#EF4444", marginBottom: 4, fontWeight: 600 }}>Slowest Moving</div>
+              {byVelocity.slice(-3).reverse().map((d, i) => (
+                <div
+                  key={i}
+                  onMouseEnter={() => setHoveredDeal(`slow-${i}`)}
+                  onMouseLeave={() => setHoveredDeal(null)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", padding: "3px 6px",
+                    borderRadius: 3, fontSize: 10,
+                    background: hoveredDeal === `slow-${i}` ? "#1E293B" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ color: "#CBD5E1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
+                    {strip(d.name)}
+                  </span>
+                  <span style={{ color: "#EF4444", fontWeight: 600 }}>{d.daysInStage || 0}d</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Velocity formula explanation */}
+          <div style={{
+            marginTop: 8, padding: "6px 8px", background: "#1E293B", borderRadius: 4,
+            fontSize: 9, color: "#64748B", textAlign: "center",
+          }}>
+            Velocity = (Deals x Avg Size x Win Rate) / Avg Cycle = ({deals.length} x {fmt(avgDealSize)} x {avgProbability.toFixed(0)}%) / {avgDaysInPipeline}d
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Deal Amount Distribution Chart ──────────────────────────────
+export function DealAmountDistribution({ deals }) {
+  if (!deals || deals.length === 0) return null;
+
+  const brackets = [
+    { label: "<$10K", min: 0, max: 10000, color: "#64748B" },
+    { label: "$10-25K", min: 10000, max: 25000, color: "#3B82F6" },
+    { label: "$25-50K", min: 25000, max: 50000, color: "#8B5CF6" },
+    { label: "$50-100K", min: 50000, max: 100000, color: "#F59E0B" },
+    { label: "$100K+", min: 100000, max: Infinity, color: "#10B981" },
+  ];
+
+  const distribution = brackets.map(b => ({
+    ...b,
+    count: deals.filter(d => (d.amount || 0) >= b.min && (d.amount || 0) < b.max).length,
+    total: deals.filter(d => (d.amount || 0) >= b.min && (d.amount || 0) < b.max).reduce((s, d) => s + (d.amount || 0), 0),
+  }));
+
+  const maxCount = Math.max(...distribution.map(d => d.count), 1);
+
+  return (
+    <div style={{ padding: "0 20px 8px", background: "#0F172A" }}>
+      <div style={{ fontSize: 10, color: "#64748B", marginBottom: 6, textTransform: "uppercase" }}>Deal Size Distribution</div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 50 }}>
+        {distribution.map((b, i) => (
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            {b.count > 0 && <span style={{ fontSize: 8, color: b.color, fontWeight: 600 }}>{b.count}</span>}
+            <div style={{
+              width: "100%", height: Math.max((b.count / maxCount) * 40, b.count > 0 ? 3 : 0),
+              borderRadius: 2, background: b.color, transition: "height .3s",
+            }} />
+            <span style={{ fontSize: 8, color: "#64748B", whiteSpace: "nowrap" }}>{b.label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

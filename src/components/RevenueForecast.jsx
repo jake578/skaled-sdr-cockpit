@@ -515,6 +515,183 @@ export default function RevenueForecast({ onDealClick, onWinLoss, onCashFlow }) 
   );
 }
 
+// ── Pipeline Risk Analysis ──────────────────────────────────────
+export function PipelineRiskAnalysis({ data, onDealClick }) {
+  const [showRisk, setShowRisk] = useState(false);
+
+  if (!data || !data.topDeals) return null;
+
+  const deals = data.topDeals || [];
+
+  // Risk factors
+  const pastDueDeals = deals.filter(d => isPastDue(d.closeDate));
+  const lowProbDeals = deals.filter(d => (d.probability || 0) < 30 && (d.amount || 0) > 10000);
+  const staleDeals = deals.filter(d => {
+    if (!d.lastActivity || d.lastActivity === "—") return true;
+    return Math.floor((Date.now() - new Date(d.lastActivity).getTime()) / 86400000) > 21;
+  });
+  const bigDeals = deals.filter(d => (d.amount || 0) > 50000);
+  const singleStageDeals = deals.filter(d => (d.daysInStage || 0) > 60);
+
+  const totalAtRisk = pastDueDeals.reduce((s, d) => s + (d.amount || 0), 0)
+    + lowProbDeals.reduce((s, d) => s + (d.amount || 0), 0);
+
+  const riskScore = Math.min(100, Math.round(
+    (pastDueDeals.length * 25 + lowProbDeals.length * 15 + staleDeals.length * 10 + singleStageDeals.length * 8) / Math.max(deals.length, 1) * 10
+  ));
+
+  const riskColor = riskScore <= 25 ? "#10B981" : riskScore <= 50 ? "#F59E0B" : "#EF4444";
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        onClick={() => setShowRisk(!showRisk)}
+        style={{
+          background: "#1E293B", borderRadius: 8, padding: "12px 16px",
+          border: `1px solid ${riskColor}30`, cursor: "pointer",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14 }}>⚠</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#F1F5F9" }}>Pipeline Risk Analysis</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: riskColor, fontWeight: 600 }}>Risk Score: {riskScore}/100</span>
+          <span style={{ fontSize: 11, color: "#64748B" }}>{fmt(totalAtRisk)} at risk</span>
+          <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showRisk ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+        </div>
+      </div>
+
+      {showRisk && (
+        <div style={{
+          background: "#0F172A", borderRadius: "0 0 8px 8px", border: `1px solid ${riskColor}30`,
+          borderTop: "none", padding: 16,
+        }}>
+          {/* Risk meter */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ height: 8, background: "#1E293B", borderRadius: 4, overflow: "hidden", marginBottom: 4 }}>
+              <div style={{
+                width: `${riskScore}%`, height: "100%", borderRadius: 4,
+                background: `linear-gradient(90deg, #10B981, #F59E0B, #EF4444)`,
+                transition: "width .5s",
+              }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#64748B" }}>
+              <span>Low Risk</span>
+              <span>High Risk</span>
+            </div>
+          </div>
+
+          {/* Risk categories */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+            {/* Past Due */}
+            {pastDueDeals.length > 0 && (
+              <div style={{ background: "#EF444410", borderRadius: 6, padding: "8px 10px", border: "1px solid #EF444420" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#EF4444", marginBottom: 4 }}>
+                  Past Due ({pastDueDeals.length})
+                </div>
+                {pastDueDeals.slice(0, 3).map((d, i) => (
+                  <div
+                    key={i}
+                    onClick={() => onDealClick?.(d)}
+                    style={{
+                      fontSize: 10, color: "#CBD5E1", padding: "2px 0", cursor: "pointer",
+                      display: "flex", justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>{strip(d.name)}</span>
+                    <span style={{ fontWeight: 600, color: "#F1F5F9" }}>{fmt(d.amount)}</span>
+                  </div>
+                ))}
+                {pastDueDeals.length > 3 && <div style={{ fontSize: 9, color: "#64748B" }}>+{pastDueDeals.length - 3} more</div>}
+              </div>
+            )}
+
+            {/* Low Probability */}
+            {lowProbDeals.length > 0 && (
+              <div style={{ background: "#F59E0B10", borderRadius: 6, padding: "8px 10px", border: "1px solid #F59E0B20" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#F59E0B", marginBottom: 4 }}>
+                  Low Probability ({lowProbDeals.length})
+                </div>
+                {lowProbDeals.slice(0, 3).map((d, i) => (
+                  <div
+                    key={i}
+                    onClick={() => onDealClick?.(d)}
+                    style={{
+                      fontSize: 10, color: "#CBD5E1", padding: "2px 0", cursor: "pointer",
+                      display: "flex", justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>{strip(d.name)}</span>
+                    <span style={{ fontWeight: 600 }}>{d.probability || 0}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stale Deals */}
+            {staleDeals.length > 0 && (
+              <div style={{ background: "#64748B10", borderRadius: 6, padding: "8px 10px", border: "1px solid #64748B20" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#94A3B8", marginBottom: 4 }}>
+                  No Recent Activity ({staleDeals.length})
+                </div>
+                {staleDeals.slice(0, 3).map((d, i) => (
+                  <div
+                    key={i}
+                    onClick={() => onDealClick?.(d)}
+                    style={{
+                      fontSize: 10, color: "#CBD5E1", padding: "2px 0", cursor: "pointer",
+                      display: "flex", justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>{strip(d.name)}</span>
+                    <span style={{ fontWeight: 600, color: "#F1F5F9" }}>{fmt(d.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stuck in Stage */}
+            {singleStageDeals.length > 0 && (
+              <div style={{ background: "#3B82F610", borderRadius: 6, padding: "8px 10px", border: "1px solid #3B82F620" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#3B82F6", marginBottom: 4 }}>
+                  Stuck in Stage ({singleStageDeals.length})
+                </div>
+                {singleStageDeals.slice(0, 3).map((d, i) => (
+                  <div
+                    key={i}
+                    onClick={() => onDealClick?.(d)}
+                    style={{
+                      fontSize: 10, color: "#CBD5E1", padding: "2px 0", cursor: "pointer",
+                      display: "flex", justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>{strip(d.name)}</span>
+                    <span style={{ fontWeight: 600 }}>{d.daysInStage}d</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Recommendations */}
+          <div style={{ marginTop: 10, padding: "8px 10px", background: "#8B5CF610", borderRadius: 6, border: "1px solid #8B5CF620" }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#8B5CF6", marginBottom: 4 }}>Recommended Actions</div>
+            <div style={{ fontSize: 11, color: "#CBD5E1", lineHeight: 1.5 }}>
+              {pastDueDeals.length > 0 && <div>- Update close dates on {pastDueDeals.length} past due deals or move to Closed Lost</div>}
+              {staleDeals.length > 0 && <div>- Re-engage {staleDeals.length} deals with no recent activity</div>}
+              {lowProbDeals.length > 0 && <div>- Reassess {lowProbDeals.length} low-probability deals — nurture or disqualify</div>}
+              {bigDeals.length > 0 && <div>- Focus on {bigDeals.length} high-value deals ({fmt(bigDeals.reduce((s, d) => s + (d.amount || 0), 0))} total)</div>}
+              {singleStageDeals.length > 0 && <div>- Investigate {singleStageDeals.length} deals stuck in same stage for 60+ days</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const actionBtnStyle = (color) => ({
   padding: "5px 12px", borderRadius: 5, border: "none", cursor: "pointer",
   fontSize: 11, fontWeight: 600, background: color + "20", color,

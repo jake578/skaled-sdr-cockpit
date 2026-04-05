@@ -350,6 +350,11 @@ export default function DealTimeline({ oppId, accountName, onClose, onEmail, onD
         ))}
       </div>
 
+      {/* Engagement Analytics */}
+      {data && timeline.length > 0 && (
+        <TimelineAnalytics timeline={timeline} sources={sources} />
+      )}
+
       {/* Footer summary */}
       {data && (
         <div style={{
@@ -381,6 +386,241 @@ export default function DealTimeline({ oppId, accountName, onClose, onEmail, onD
               >Deep Intel</button>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Timeline Analytics Panel ────────────────────────────────────
+function TimelineAnalytics({ timeline, sources }) {
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // Compute engagement metrics
+  const emailCount = timeline.filter(t => t.type === "email").length;
+  const callCount = timeline.filter(t => t.type === "call" || t.type === "chorus").length;
+  const meetingCount = timeline.filter(t => t.type === "meeting").length;
+  const taskCount = timeline.filter(t => t.type === "task").length;
+
+  // Activity by week (last 8 weeks)
+  const weeklyActivity = [];
+  const now = new Date();
+  for (let w = 0; w < 8; w++) {
+    const weekStart = new Date(now.getTime() - (w + 1) * 7 * 86400000);
+    const weekEnd = new Date(now.getTime() - w * 7 * 86400000);
+    const count = timeline.filter(t => {
+      if (!t.date || t.date === "—") return false;
+      const d = new Date(t.date);
+      return d >= weekStart && d < weekEnd;
+    }).length;
+    weeklyActivity.unshift({ week: `W-${w}`, count });
+  }
+  const maxWeekly = Math.max(...weeklyActivity.map(w => w.count), 1);
+
+  // Unique contacts
+  const contacts = new Set();
+  timeline.forEach(t => {
+    if (t.contact && t.contact !== "—") contacts.add(t.contact);
+    if (t.from) contacts.add(t.from.split("<")[0].trim());
+  });
+
+  // Response time estimate
+  const dates = timeline.filter(t => t.date && t.date !== "—").map(t => new Date(t.date).getTime()).sort();
+  let avgGap = 0;
+  if (dates.length > 1) {
+    const gaps = [];
+    for (let i = 1; i < dates.length; i++) gaps.push(dates[i] - dates[i - 1]);
+    avgGap = Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length / 86400000);
+  }
+
+  // Trend: is engagement increasing or decreasing?
+  const recentWeeks = weeklyActivity.slice(-4);
+  const olderWeeks = weeklyActivity.slice(0, 4);
+  const recentAvg = recentWeeks.reduce((s, w) => s + w.count, 0) / Math.max(recentWeeks.length, 1);
+  const olderAvg = olderWeeks.reduce((s, w) => s + w.count, 0) / Math.max(olderWeeks.length, 1);
+  const trend = recentAvg > olderAvg ? "increasing" : recentAvg < olderAvg ? "decreasing" : "stable";
+  const trendColor = trend === "increasing" ? "#10B981" : trend === "decreasing" ? "#EF4444" : "#F59E0B";
+
+  return (
+    <div style={{ borderTop: "1px solid #1E293B", flexShrink: 0 }}>
+      <div
+        onClick={() => setShowAnalytics(!showAnalytics)}
+        style={{
+          padding: "8px 18px", cursor: "pointer", display: "flex",
+          justifyContent: "space-between", alignItems: "center",
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: "#94A3B8" }}>Engagement Analytics</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10, color: trendColor, fontWeight: 600 }}>
+            {trend === "increasing" ? "↑ Increasing" : trend === "decreasing" ? "↓ Decreasing" : "→ Stable"}
+          </span>
+          <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showAnalytics ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+        </div>
+      </div>
+
+      {showAnalytics && (
+        <div style={{ padding: "0 18px 12px" }}>
+          {/* Key metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
+            {[
+              { label: "Emails", value: emailCount, color: "#3B82F6", icon: "✉" },
+              { label: "Calls", value: callCount, color: "#8B5CF6", icon: "📞" },
+              { label: "Meetings", value: meetingCount, color: "#10B981", icon: "📅" },
+              { label: "Contacts", value: contacts.size, color: "#F59E0B", icon: "👥" },
+              { label: "Avg Gap", value: `${avgGap}d`, color: avgGap <= 3 ? "#10B981" : avgGap <= 7 ? "#F59E0B" : "#EF4444", icon: "⏱" },
+            ].map((m, i) => (
+              <div key={i} style={{
+                background: "#1E293B", borderRadius: 4, padding: "6px 8px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 10 }}>{m.icon}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: m.color }}>{m.value}</div>
+                <div style={{ fontSize: 8, color: "#64748B", textTransform: "uppercase" }}>{m.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Weekly activity mini chart */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 10, color: "#64748B", marginBottom: 6, textTransform: "uppercase" }}>Weekly Activity (Last 8 Weeks)</div>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 40 }}>
+              {weeklyActivity.map((w, i) => (
+                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <div style={{
+                    width: "100%", height: Math.max((w.count / maxWeekly) * 36, 2),
+                    borderRadius: 2, background: i >= 4 ? "#3B82F6" : "#3B82F660",
+                    transition: "height .3s",
+                  }} />
+                  <span style={{ fontSize: 8, color: "#64748B" }}>{w.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Engagement trend indicator */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
+            background: trendColor + "10", borderRadius: 4, border: `1px solid ${trendColor}20`,
+          }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: trendColor }} />
+            <span style={{ fontSize: 11, color: trendColor, fontWeight: 600 }}>
+              Engagement is {trend}
+            </span>
+            <span style={{ fontSize: 10, color: "#64748B" }}>
+              — {recentAvg.toFixed(1)} interactions/week (recent) vs {olderAvg.toFixed(1)} (prior)
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Relationship Strength Indicator ─────────────────────────────
+export function RelationshipStrength({ timeline }) {
+  if (!timeline || timeline.length === 0) return null;
+
+  const emailCount = timeline.filter(t => t.type === "email").length;
+  const callCount = timeline.filter(t => t.type === "call" || t.type === "chorus").length;
+  const meetingCount = timeline.filter(t => t.type === "meeting").length;
+
+  // Calculate relationship strength (0-100)
+  const recencyScore = (() => {
+    const dates = timeline.filter(t => t.date && t.date !== "—").map(t => new Date(t.date).getTime());
+    if (dates.length === 0) return 0;
+    const latest = Math.max(...dates);
+    const daysSince = Math.floor((Date.now() - latest) / 86400000);
+    return daysSince <= 3 ? 30 : daysSince <= 7 ? 25 : daysSince <= 14 ? 15 : daysSince <= 30 ? 8 : 0;
+  })();
+
+  const frequencyScore = Math.min(timeline.length * 2, 30);
+  const diversityScore = ((emailCount > 0 ? 10 : 0) + (callCount > 0 ? 15 : 0) + (meetingCount > 0 ? 15 : 0));
+  const total = Math.min(recencyScore + frequencyScore + diversityScore, 100);
+  const color = total >= 70 ? "#10B981" : total >= 40 ? "#F59E0B" : "#EF4444";
+  const label = total >= 70 ? "Strong" : total >= 40 ? "Moderate" : "Weak";
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, padding: "4px 0",
+    }}>
+      <span style={{ fontSize: 10, color: "#64748B" }}>Relationship:</span>
+      <div style={{ width: 60, height: 4, background: "#1E293B", borderRadius: 2, overflow: "hidden" }}>
+        <div style={{ width: `${total}%`, height: "100%", background: color, borderRadius: 2, transition: "width .5s" }} />
+      </div>
+      <span style={{ fontSize: 10, fontWeight: 600, color }}>{label} ({total})</span>
+    </div>
+  );
+}
+
+// ── Key People Panel ────────────────────────────────────────────
+export function KeyPeopleFromTimeline({ timeline }) {
+  const [showPeople, setShowPeople] = useState(false);
+
+  if (!timeline || timeline.length === 0) return null;
+
+  // Extract unique people from timeline
+  const people = {};
+  timeline.forEach(item => {
+    if (item.contact && item.contact !== "—") {
+      if (!people[item.contact]) people[item.contact] = { name: item.contact, interactions: 0, lastSeen: null, types: new Set() };
+      people[item.contact].interactions++;
+      people[item.contact].types.add(item.type);
+      const d = item.date && item.date !== "—" ? new Date(item.date) : null;
+      if (d && (!people[item.contact].lastSeen || d > people[item.contact].lastSeen)) {
+        people[item.contact].lastSeen = d;
+      }
+    }
+    if (item.from) {
+      const fromName = item.from.split("<")[0].trim().replace(/"/g, "");
+      if (fromName && fromName !== "—" && !fromName.includes("jake") && !fromName.includes("Jake")) {
+        if (!people[fromName]) people[fromName] = { name: fromName, interactions: 0, lastSeen: null, types: new Set() };
+        people[fromName].interactions++;
+        people[fromName].types.add("email");
+      }
+    }
+  });
+
+  const sorted = Object.values(people).sort((a, b) => b.interactions - a.interactions);
+
+  if (sorted.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <div
+        onClick={(e) => { e.stopPropagation(); setShowPeople(!showPeople); }}
+        style={{
+          fontSize: 10, fontWeight: 600, color: "#F59E0B", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 4, padding: "6px 0",
+        }}
+      >
+        <span style={{ transition: "transform .2s", transform: showPeople ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▸</span>
+        Key People ({sorted.length})
+      </div>
+
+      {showPeople && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 4 }}>
+          {sorted.slice(0, 8).map((person, i) => (
+            <div key={i} style={{
+              background: "#0F172A", borderRadius: 4, padding: "6px 8px",
+              border: "1px solid #1E293B",
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#E2E8F0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {person.name}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                <span style={{ fontSize: 9, color: "#64748B" }}>{person.interactions} touches</span>
+                {Array.from(person.types).map(t => {
+                  const icons = { email: "✉", call: "📞", meeting: "📅", chorus: "🎙", task: "📋" };
+                  return <span key={t} style={{ fontSize: 10 }}>{icons[t] || "?"}</span>;
+                })}
+              </div>
+              {person.lastSeen && (
+                <div style={{ fontSize: 9, color: "#64748B", marginTop: 1 }}>
+                  Last: {formatDate(person.lastSeen.toISOString().split("T")[0])}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

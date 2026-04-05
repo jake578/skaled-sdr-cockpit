@@ -411,6 +411,153 @@ export default function ClientHealth({ onAccount360, onEmail, onDeepIntel, onDea
           No clients match your filters
         </div>
       )}
+
+      {/* Portfolio Health Summary */}
+      {data.clients.length > 0 && (
+        <PortfolioHealthSummary clients={data.clients} summary={s} />
+      )}
+    </div>
+  );
+}
+
+// ── Portfolio Health Summary ────────────────────────────────────
+function PortfolioHealthSummary({ clients, summary }) {
+  const [showSummary, setShowSummary] = useState(false);
+
+  const avgScore = clients.length > 0 ? (clients.reduce((s, c) => s + (c.healthScore || 0), 0) / clients.length).toFixed(1) : 0;
+  const avgDaysSinceActivity = clients.length > 0
+    ? (clients.filter(c => c.daysSinceActivity !== 999).reduce((s, c) => s + c.daysSinceActivity, 0) / Math.max(clients.filter(c => c.daysSinceActivity !== 999).length, 1)).toFixed(0)
+    : "—";
+
+  // Risk distribution
+  const atRisk = clients.filter(c => c.status === "At Risk");
+  const needsAttention = clients.filter(c => c.status === "Needs Attention");
+  const healthy = clients.filter(c => c.status === "Healthy");
+
+  // Revenue at risk
+  const revenueAtRisk = atRisk.reduce((s, c) => s + (c.openPipeline || 0), 0);
+  const revenueHealthy = healthy.reduce((s, c) => s + (c.openPipeline || 0), 0);
+
+  // Engagement gaps (clients with no recent activity)
+  const staleClients = clients.filter(c => c.daysSinceActivity > 14 && c.daysSinceActivity !== 999);
+  const activeClients = clients.filter(c => c.daysSinceActivity <= 7);
+
+  // Top clients by pipeline
+  const topByPipeline = [...clients].sort((a, b) => (b.openPipeline || 0) - (a.openPipeline || 0)).slice(0, 5);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        onClick={() => setShowSummary(!showSummary)}
+        style={{
+          background: "#1E293B", borderRadius: 8, padding: "12px 16px",
+          border: "1px solid #334155", cursor: "pointer",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14 }}>📊</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#F1F5F9" }}>Portfolio Health Summary</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 11, color: scoreColor(parseFloat(avgScore)) }}>Avg Score: {avgScore}</span>
+          <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showSummary ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+        </div>
+      </div>
+
+      {showSummary && (
+        <div style={{ background: "#0F172A", borderRadius: "0 0 8px 8px", border: "1px solid #334155", borderTop: "none", padding: "16px" }}>
+          {/* Key portfolio metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 14 }}>
+            {[
+              { label: "Avg Health", value: avgScore, color: scoreColor(parseFloat(avgScore)) },
+              { label: "Avg Days Silent", value: `${avgDaysSinceActivity}d`, color: parseInt(avgDaysSinceActivity) > 14 ? "#EF4444" : "#10B981" },
+              { label: "Pipeline at Risk", value: fmt(revenueAtRisk), color: revenueAtRisk > 0 ? "#EF4444" : "#10B981" },
+              { label: "Active Clients", value: `${activeClients.length}/${clients.length}`, color: "#3B82F6" },
+            ].map((m, i) => (
+              <div key={i} style={{ background: "#1E293B", borderRadius: 6, padding: "8px 10px", textAlign: "center" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: m.color }}>{m.value}</div>
+                <div style={{ fontSize: 9, color: "#64748B", textTransform: "uppercase", marginTop: 2 }}>{m.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Health distribution bar */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, color: "#64748B", marginBottom: 4, textTransform: "uppercase" }}>Health Distribution</div>
+            <div style={{ height: 8, borderRadius: 4, overflow: "hidden", display: "flex" }}>
+              {healthy.length > 0 && <div style={{ flex: healthy.length, background: "#10B981" }} />}
+              {needsAttention.length > 0 && <div style={{ flex: needsAttention.length, background: "#F59E0B" }} />}
+              {atRisk.length > 0 && <div style={{ flex: atRisk.length, background: "#EF4444" }} />}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+              <span style={{ fontSize: 10, color: "#10B981" }}>Healthy: {healthy.length}</span>
+              <span style={{ fontSize: 10, color: "#F59E0B" }}>Attention: {needsAttention.length}</span>
+              <span style={{ fontSize: 10, color: "#EF4444" }}>At Risk: {atRisk.length}</span>
+            </div>
+          </div>
+
+          {/* Stale clients warning */}
+          {staleClients.length > 0 && (
+            <div style={{
+              padding: "8px 12px", background: "#EF444410", borderRadius: 6,
+              border: "1px solid #EF444420", marginBottom: 14,
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#EF4444", marginBottom: 4 }}>
+                Engagement Gaps ({staleClients.length} clients)
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {staleClients.slice(0, 6).map((c, i) => (
+                  <span key={i} style={{
+                    padding: "2px 8px", borderRadius: 3, fontSize: 10,
+                    background: "#1E293B", color: "#EF4444", border: "1px solid #EF444420",
+                  }}>
+                    {c.name} ({c.daysSinceActivity}d)
+                  </span>
+                ))}
+                {staleClients.length > 6 && (
+                  <span style={{ fontSize: 10, color: "#64748B" }}>+{staleClients.length - 6} more</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Top clients by pipeline */}
+          <div>
+            <div style={{ fontSize: 10, color: "#64748B", marginBottom: 6, textTransform: "uppercase" }}>Top Clients by Pipeline</div>
+            {topByPipeline.map((c, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "4px 8px", borderBottom: i < topByPipeline.length - 1 ? "1px solid #1E293B" : "none",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: scoreColor(c.healthScore),
+                  }} />
+                  <span style={{ fontSize: 11, color: "#E2E8F0" }}>{c.name}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#F1F5F9" }}>{fmt(c.openPipeline)}</span>
+                  <span style={{ fontSize: 10, color: scoreColor(c.healthScore), fontWeight: 600 }}>{c.healthScore}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Recommendations */}
+          <div style={{ marginTop: 12, padding: "8px 10px", background: "#8B5CF610", borderRadius: 6, border: "1px solid #8B5CF620" }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#8B5CF6", marginBottom: 4 }}>AI Recommendations</div>
+            <div style={{ fontSize: 11, color: "#CBD5E1", lineHeight: 1.5 }}>
+              {atRisk.length > 0 && <div>- Prioritize outreach to {atRisk.slice(0, 3).map(c => c.name).join(", ")} (at risk)</div>}
+              {staleClients.length > 0 && <div>- Re-engage {staleClients.length} clients with no recent touchpoints</div>}
+              {revenueAtRisk > 0 && <div>- {fmt(revenueAtRisk)} in pipeline needs attention from at-risk accounts</div>}
+              {healthy.length > 0 && <div>- {healthy.length} healthy clients are candidates for expansion/upsell</div>}
+              <div>- Schedule QBRs for top {Math.min(3, topByPipeline.length)} pipeline accounts</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

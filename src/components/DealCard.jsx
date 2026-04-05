@@ -262,10 +262,201 @@ export default function DealCard({
             </div>
           )}
 
+          {/* Deal Health Indicator */}
+          <DealHealthBar deal={deal} />
+
           {/* Deal Description / Next Step if available */}
           {deal.description && (
             <div style={{ marginTop: 10, padding: "8px 10px", background: "#0F172A", borderRadius: 6, fontSize: 12, color: "#94A3B8", lineHeight: 1.5, border: "1px solid #1E293B" }}>
               {strip(deal.description).substring(0, 300)}
+            </div>
+          )}
+
+          {/* Mini Activity Snapshot */}
+          <DealActivitySnapshot deal={deal} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Deal Health Bar ─────────────────────────────────────────────
+function DealHealthBar({ deal }) {
+  const [showDetail, setShowDetail] = useState(false);
+
+  // Calculate health factors
+  const factors = [];
+
+  // Days in pipeline
+  const days = deal.daysInStage || 0;
+  const daysScore = days <= 30 ? 100 : days <= 60 ? 70 : days <= 90 ? 40 : 15;
+  factors.push({ name: "Velocity", score: daysScore, detail: `${days}d in pipeline`, color: daysScore >= 70 ? "#10B981" : daysScore >= 40 ? "#F59E0B" : "#EF4444" });
+
+  // Probability
+  const prob = deal.probability || 0;
+  factors.push({ name: "Probability", score: prob, detail: `${prob}%`, color: prob >= 70 ? "#10B981" : prob >= 40 ? "#F59E0B" : "#EF4444" });
+
+  // Close date health
+  const daysLeft = daysUntilClose(deal.closeDate);
+  const closeScore = daysLeft === null ? 50 : daysLeft < 0 ? 10 : daysLeft <= 7 ? 40 : daysLeft <= 30 ? 70 : 90;
+  factors.push({ name: "Timeline", score: closeScore, detail: daysLeft !== null ? (daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : `${daysLeft}d left`) : "No date", color: closeScore >= 70 ? "#10B981" : closeScore >= 40 ? "#F59E0B" : "#EF4444" });
+
+  // Activity recency
+  const lastAct = deal.lastActivity;
+  let actScore = 30;
+  if (lastAct && lastAct !== "—") {
+    const daysSinceAct = Math.floor((Date.now() - new Date(lastAct).getTime()) / 86400000);
+    actScore = daysSinceAct <= 7 ? 100 : daysSinceAct <= 14 ? 70 : daysSinceAct <= 30 ? 40 : 15;
+  }
+  factors.push({ name: "Engagement", score: actScore, detail: lastAct && lastAct !== "—" ? formatDate(lastAct) : "No activity", color: actScore >= 70 ? "#10B981" : actScore >= 40 ? "#F59E0B" : "#EF4444" });
+
+  const overallScore = Math.round(factors.reduce((s, f) => s + f.score, 0) / factors.length);
+  const overallColor = overallScore >= 70 ? "#10B981" : overallScore >= 40 ? "#F59E0B" : "#EF4444";
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {/* Overall health bar */}
+      <div
+        onClick={(e) => { e.stopPropagation(); setShowDetail(!showDetail); }}
+        style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+      >
+        <span style={{ fontSize: 10, color: "#64748B", width: 60 }}>Deal Health</span>
+        <div style={{ flex: 1, height: 6, background: "#0F172A", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{
+            width: `${overallScore}%`, height: "100%", borderRadius: 3,
+            background: `linear-gradient(90deg, ${overallColor}CC, ${overallColor})`,
+            transition: "width .5s ease",
+          }} />
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 700, color: overallColor, width: 30, textAlign: "right" }}>{overallScore}</span>
+        <span style={{ fontSize: 10, color: "#64748B", transition: "transform .2s", transform: showDetail ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
+      </div>
+
+      {showDetail && (
+        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+          {factors.map((f, i) => (
+            <div key={i} style={{
+              background: "#0F172A", borderRadius: 6, padding: "6px 8px",
+              textAlign: "center", border: `1px solid ${f.color}20`,
+            }}>
+              <div style={{ fontSize: 9, color: "#64748B", textTransform: "uppercase", marginBottom: 2 }}>{f.name}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: f.color }}>{f.score}</div>
+              <div style={{ fontSize: 9, color: "#94A3B8", marginTop: 1 }}>{f.detail}</div>
+              {/* Mini bar */}
+              <div style={{ height: 3, background: "#1E293B", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
+                <div style={{ width: `${f.score}%`, height: "100%", borderRadius: 2, background: f.color, transition: "width .4s" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Deal Activity Snapshot ──────────────────────────────────────
+function DealActivitySnapshot({ deal }) {
+  const [showSnapshot, setShowSnapshot] = useState(false);
+  const [snapshotData, setSnapshotData] = useState(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+
+  const loadSnapshot = async () => {
+    if (snapshotData || !deal.account || deal.account === "—") return;
+    setSnapshotLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/unified-timeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountName: deal.account }),
+      });
+      const data = await res.json();
+      setSnapshotData(data);
+    } catch {}
+    setSnapshotLoading(false);
+  };
+
+  const handleToggle = (e) => {
+    e.stopPropagation();
+    if (!showSnapshot) loadSnapshot();
+    setShowSnapshot(!showSnapshot);
+  };
+
+  const timeline = snapshotData?.timeline || [];
+  const recentEmails = timeline.filter(t => t.type === "email").slice(0, 3);
+  const recentCalls = timeline.filter(t => t.type === "call" || t.type === "chorus").slice(0, 2);
+  const recentMeetings = timeline.filter(t => t.type === "meeting").slice(0, 2);
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div
+        onClick={handleToggle}
+        style={{
+          fontSize: 11, fontWeight: 600, color: "#94A3B8", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 4, padding: "4px 0",
+        }}
+      >
+        <span style={{ transition: "transform .2s", transform: showSnapshot ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▸</span>
+        Recent Activity Snapshot
+        {snapshotData && <span style={{ color: "#64748B", fontWeight: 400 }}> ({timeline.length} interactions)</span>}
+      </div>
+
+      {showSnapshot && (
+        <div style={{ marginTop: 4, padding: "8px", background: "#0F172A", borderRadius: 6, border: "1px solid #1E293B" }}>
+          {snapshotLoading && <div style={{ fontSize: 11, color: "#64748B", padding: 8 }}>Loading activity...</div>}
+
+          {snapshotData && timeline.length === 0 && (
+            <div style={{ fontSize: 11, color: "#64748B", padding: 8 }}>No recent activity found</div>
+          )}
+
+          {recentEmails.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 9, color: "#3B82F6", textTransform: "uppercase", fontWeight: 700, marginBottom: 3 }}>Emails</div>
+              {recentEmails.map((e, i) => (
+                <div key={i} style={{ fontSize: 10, color: "#94A3B8", padding: "2px 0", display: "flex", gap: 6 }}>
+                  <span style={{ color: "#64748B", flexShrink: 0 }}>{formatDate(e.date)}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{strip(e.subject || "No subject")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {recentCalls.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 9, color: "#8B5CF6", textTransform: "uppercase", fontWeight: 700, marginBottom: 3 }}>Calls</div>
+              {recentCalls.map((c, i) => (
+                <div key={i} style={{ fontSize: 10, color: "#94A3B8", padding: "2px 0", display: "flex", gap: 6 }}>
+                  <span style={{ color: "#64748B", flexShrink: 0 }}>{formatDate(c.date)}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{strip(c.subject || "Call")}</span>
+                  {c.duration && <span style={{ color: "#64748B", flexShrink: 0 }}>{c.duration}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {recentMeetings.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, color: "#10B981", textTransform: "uppercase", fontWeight: 700, marginBottom: 3 }}>Meetings</div>
+              {recentMeetings.map((m, i) => (
+                <div key={i} style={{ fontSize: 10, color: "#94A3B8", padding: "2px 0", display: "flex", gap: 6 }}>
+                  <span style={{ color: "#64748B", flexShrink: 0 }}>{formatDate(m.date)}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{strip(m.subject || "Meeting")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Summary bar */}
+          {timeline.length > 0 && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid #1E293B", display: "flex", gap: 8 }}>
+              {[
+                { type: "email", icon: "✉", color: "#3B82F6", count: timeline.filter(t => t.type === "email").length },
+                { type: "call", icon: "📞", color: "#8B5CF6", count: timeline.filter(t => t.type === "call" || t.type === "chorus").length },
+                { type: "meeting", icon: "📅", color: "#10B981", count: timeline.filter(t => t.type === "meeting").length },
+              ].filter(t => t.count > 0).map((t, i) => (
+                <span key={i} style={{ fontSize: 10, color: t.color, display: "flex", alignItems: "center", gap: 2 }}>
+                  {t.icon} {t.count}
+                </span>
+              ))}
             </div>
           )}
         </div>

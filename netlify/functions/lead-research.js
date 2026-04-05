@@ -198,6 +198,75 @@ ${contextForClaude}`,
         : `Net-new account. ${results.priorEmails} prior emails, ${results.priorMeetings} prior meetings found.`;
     }
 
+    // ── 5. LinkedIn enrichment hint ────────────────────────────────
+    // Attempt to find LinkedIn data via company website
+    if (company) {
+      try {
+        results.linkedInSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${leadName || ""} ${company}`)}`;
+        results.companyLinkedIn = `https://www.linkedin.com/company/${encodeURIComponent(company.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}`;
+      } catch {}
+    }
+
+    // ── 6. Compute lead score ───────────────────────────────────
+    let leadScore = 0;
+    const scoreFactors = [];
+
+    // Prior relationship bonus
+    if (results.priorEmails > 0) {
+      const bonus = Math.min(results.priorEmails * 5, 20);
+      leadScore += bonus;
+      scoreFactors.push({ factor: "Prior Emails", score: bonus, detail: `${results.priorEmails} emails found` });
+    }
+    if (results.priorMeetings > 0) {
+      const bonus = Math.min(results.priorMeetings * 8, 20);
+      leadScore += bonus;
+      scoreFactors.push({ factor: "Prior Meetings", score: bonus, detail: `${results.priorMeetings} meetings found` });
+    }
+
+    // Existing account bonus
+    if (results.existingAccount) {
+      leadScore += 15;
+      scoreFactors.push({ factor: "Existing Account", score: 15, detail: `${results.existingAccount.Name} in SFDC` });
+    } else {
+      // Net-new is not necessarily bad
+      leadScore += 5;
+      scoreFactors.push({ factor: "Net-New Account", score: 5, detail: "New potential customer" });
+    }
+
+    // Company name provided
+    if (company && company !== "—") {
+      leadScore += 10;
+      scoreFactors.push({ factor: "Company Known", score: 10, detail: company });
+    }
+
+    // Title quality (VP/Director/C-level)
+    if (leadName) {
+      leadScore += 5;
+      scoreFactors.push({ factor: "Contact Named", score: 5, detail: leadName });
+    }
+
+    // Cap at 100
+    results.leadScore = Math.min(leadScore, 100);
+    results.scoreFactors = scoreFactors;
+    results.scoreColor = results.leadScore >= 60 ? "high" : results.leadScore >= 30 ? "medium" : "low";
+
+    // ── 7. Suggested next actions ───────────────────────────────
+    results.suggestedActions = [];
+    if (results.priorEmails === 0 && results.priorMeetings === 0) {
+      results.suggestedActions.push({ action: "cold-outreach", label: "Send personalized cold outreach", priority: "high" });
+      results.suggestedActions.push({ action: "linkedin-connect", label: "Connect on LinkedIn first", priority: "medium" });
+    } else if (results.priorEmails > 0 && results.priorMeetings === 0) {
+      results.suggestedActions.push({ action: "follow-up", label: "Follow up on prior email thread", priority: "high" });
+      results.suggestedActions.push({ action: "book-meeting", label: "Try to book a call", priority: "high" });
+    } else {
+      results.suggestedActions.push({ action: "re-engage", label: "Re-engage with value-add content", priority: "medium" });
+      results.suggestedActions.push({ action: "check-timing", label: "Check if timing is right now", priority: "medium" });
+    }
+
+    if (results.existingAccount) {
+      results.suggestedActions.push({ action: "account-review", label: "Review existing account relationship", priority: "high" });
+    }
+
     return Response.json(results);
 
   } catch (e) {

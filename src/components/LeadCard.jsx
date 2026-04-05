@@ -260,6 +260,156 @@ export default function LeadCard({ lead, expanded, onToggle, onResearch, onEmail
               Research error: {researchData.error}
             </div>
           )}
+
+          {/* Quick Outreach Composer */}
+          <LeadQuickOutreach lead={lead} />
+
+          {/* Lead Score Breakdown */}
+          <LeadScoreDetail lead={lead} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Quick Outreach Composer ─────────────────────────────────────
+function LeadQuickOutreach({ lead }) {
+  const [showComposer, setShowComposer] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const generateDraft = async () => {
+    setDraftLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/claude-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Draft a short, personalized outreach email from Jake Dunlap (CEO, Skaled Consulting) to ${lead.name} (${lead.title || "Unknown title"}) at ${lead.company || "Unknown company"}.
+
+Skaled helps B2B companies build and scale their sales organizations through consulting, training, and fractional sales leadership.
+
+The email should be:
+- 3-4 sentences max
+- Reference something specific about their company or role
+- Have a clear, low-commitment CTA (like a 15-min call)
+- Sound human, not templated
+
+Just provide the subject line and body, no other commentary.`,
+          history: [],
+        }),
+      });
+      const data = await res.json();
+      setEmailDraft(strip(data.response || data.message || "Could not generate draft"));
+    } catch (e) {
+      setEmailDraft(`Error: ${e.message}`);
+    }
+    setDraftLoading(false);
+  };
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div
+        onClick={(e) => { e.stopPropagation(); if (!showComposer) generateDraft(); setShowComposer(!showComposer); }}
+        style={{
+          fontSize: 11, fontWeight: 600, color: "#10B981", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 4, padding: "4px 0",
+        }}
+      >
+        <span style={{ transition: "transform .2s", transform: showComposer ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▸</span>
+        Quick Outreach Draft
+      </div>
+
+      {showComposer && (
+        <div style={{ marginTop: 4, padding: "10px 12px", background: "#0F172A", borderRadius: 8, border: "1px solid #10B98130" }}>
+          {draftLoading && (
+            <div style={{ fontSize: 11, color: "#64748B", textAlign: "center", padding: 12 }}>
+              Drafting personalized email for {lead.name}...
+            </div>
+          )}
+          {emailDraft && !draftLoading && (
+            <>
+              <div style={{ fontSize: 12, color: "#E2E8F0", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                {emailDraft}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(emailDraft);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
+                  style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, background: "#33415530", color: copied ? "#10B981" : "#94A3B8" }}
+                >{copied ? "Copied!" : "Copy"}</button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const lines = emailDraft.split("\n");
+                    const subject = lines.find(l => l.toLowerCase().includes("subject"))?.replace(/^subject:?\s*/i, "") || `Introduction from Skaled`;
+                    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailDraft)}`);
+                  }}
+                  style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, background: "#3B82F620", color: "#3B82F6" }}
+                >Open in Email</button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); generateDraft(); }}
+                  style={{ padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 10, fontWeight: 600, background: "#33415530", color: "#94A3B8" }}
+                >Regenerate</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Lead Score Detail ───────────────────────────────────────────
+function LeadScoreDetail({ lead }) {
+  const [showScore, setShowScore] = useState(false);
+
+  if (!lead.score || lead.score <= 0) return null;
+
+  // Compute score factors
+  const factors = [
+    { name: "Company Fit", score: lead.company ? 20 : 5, max: 25, detail: lead.company || "No company" },
+    { name: "Title Match", score: lead.title ? (lead.title.match(/VP|Director|Head|Chief|SVP|CRO|CEO/i) ? 25 : 12) : 3, max: 25, detail: lead.title || "No title" },
+    { name: "Source Quality", score: ["Referral", "Inbound - Website"].includes(lead.source) ? 20 : lead.source ? 10 : 0, max: 20, detail: lead.source || "Unknown" },
+    { name: "Recency", score: (() => { const d = daysSince(lead.lastTouch || lead.createdDate); return d === null ? 5 : d <= 3 ? 15 : d <= 7 ? 12 : d <= 14 ? 8 : 3; })(), max: 15, detail: lead.lastTouch ? formatDate(lead.lastTouch) : "Unknown" },
+    { name: "Status", score: lead.status === "Qualified" ? 15 : lead.status === "Working" ? 10 : lead.status === "New" ? 8 : 3, max: 15, detail: lead.status || "Unknown" },
+  ];
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div
+        onClick={(e) => { e.stopPropagation(); setShowScore(!showScore); }}
+        style={{
+          fontSize: 11, fontWeight: 600, color: "#F59E0B", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 4, padding: "4px 0",
+        }}
+      >
+        <span style={{ transition: "transform .2s", transform: showScore ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block" }}>▸</span>
+        Score Breakdown ({lead.score}/100)
+      </div>
+
+      {showScore && (
+        <div style={{ marginTop: 4, padding: "8px 10px", background: "#0F172A", borderRadius: 6, border: "1px solid #F59E0B20" }}>
+          {factors.map((f, i) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                <span style={{ fontSize: 10, color: "#94A3B8" }}>{f.name}: <span style={{ color: "#E2E8F0" }}>{f.detail}</span></span>
+                <span style={{ fontSize: 10, color: "#64748B" }}>{f.score}/{f.max}</span>
+              </div>
+              <div style={{ height: 3, background: "#1E293B", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{
+                  width: `${(f.score / f.max) * 100}%`, height: "100%", borderRadius: 2,
+                  background: f.score / f.max >= 0.7 ? "#10B981" : f.score / f.max >= 0.4 ? "#F59E0B" : "#EF4444",
+                  transition: "width .4s",
+                }} />
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

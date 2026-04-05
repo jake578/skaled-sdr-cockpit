@@ -382,3 +382,109 @@ export default function InlineChat({ initialMessage, context, onClose, compact =
     </div>
   );
 }
+
+// ── Conversation Templates ──────────────────────────────────────
+export function ConversationStarter({ onSelect, contextType = "general" }) {
+  const [hoveredTemplate, setHoveredTemplate] = useState(null);
+
+  const templates = {
+    deal: [
+      { title: "Deal Risk Analysis", prompt: "Analyze this deal's risk factors. What could go wrong? What should I watch for?", icon: "⚠", color: "#EF4444" },
+      { title: "Competitive Intel", prompt: "What competitors might be in this deal? How should I position Skaled?", icon: "🏁", color: "#F59E0B" },
+      { title: "Next Steps Strategy", prompt: "What's the optimal next step for this deal? Give me 3 options ranked by impact.", icon: "🎯", color: "#10B981" },
+      { title: "Stakeholder Map", prompt: "Who are the key stakeholders I need to engage? What's each person's role in the decision?", icon: "🕸", color: "#8B5CF6" },
+      { title: "Closing Strategy", prompt: "Draft a closing strategy. What needs to happen to get this deal signed?", icon: "🤝", color: "#3B82F6" },
+    ],
+    lead: [
+      { title: "Company Research", prompt: "Research this company. What do they do, how big are they, and are they a fit for Skaled?", icon: "🔍", color: "#3B82F6" },
+      { title: "Personalized Opener", prompt: "Draft 3 personalized opening lines for cold outreach to this person.", icon: "✉", color: "#10B981" },
+      { title: "Pain Point Analysis", prompt: "Based on their title and company, what are their likely sales pain points?", icon: "🎯", color: "#F59E0B" },
+      { title: "Mutual Connections", prompt: "Who in my network might be connected to this person or company?", icon: "🤝", color: "#8B5CF6" },
+    ],
+    account: [
+      { title: "Expansion Playbook", prompt: "What upsell or cross-sell opportunities exist with this account?", icon: "📈", color: "#10B981" },
+      { title: "Churn Risk Assessment", prompt: "What's the churn risk for this account? What signals should I watch?", icon: "⚠", color: "#EF4444" },
+      { title: "QBR Prep", prompt: "Help me prepare a QBR agenda for this account. What should I cover?", icon: "📋", color: "#3B82F6" },
+      { title: "Champion Development", prompt: "Who could be our champion at this account and how do I develop them?", icon: "🌟", color: "#F59E0B" },
+    ],
+    meeting: [
+      { title: "90-Second Prep", prompt: "Give me a 90-second prep brief for this meeting.", icon: "⚡", color: "#F59E0B" },
+      { title: "Discovery Questions", prompt: "Draft 5 strategic discovery questions for this meeting.", icon: "❓", color: "#3B82F6" },
+      { title: "Objection Prep", prompt: "What objections might come up and how should I handle them?", icon: "🛡", color: "#EF4444" },
+      { title: "Post-Meeting Summary", prompt: "Help me draft a post-meeting summary with action items.", icon: "📝", color: "#10B981" },
+    ],
+    general: [
+      { title: "Pipeline Review", prompt: "Review my pipeline. What's healthy, what's at risk, and what needs attention?", icon: "📊", color: "#3B82F6" },
+      { title: "Weekly Planning", prompt: "Help me plan my week. What should I prioritize based on my pipeline and calendar?", icon: "📅", color: "#10B981" },
+      { title: "Board Update Draft", prompt: "Draft a brief board update on our sales pipeline and revenue forecast.", icon: "📋", color: "#8B5CF6" },
+      { title: "Team Coaching", prompt: "Based on our pipeline data, what coaching points should I bring up with the team?", icon: "🎓", color: "#F59E0B" },
+      { title: "Revenue Strategy", prompt: "Analyze our revenue mix and suggest strategies for next quarter growth.", icon: "💰", color: "#10B981" },
+    ],
+  };
+
+  const selected = templates[contextType] || templates.general;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 6 }}>
+      {selected.map((t, i) => (
+        <div
+          key={i}
+          onClick={() => onSelect(t.prompt)}
+          onMouseEnter={() => setHoveredTemplate(i)}
+          onMouseLeave={() => setHoveredTemplate(null)}
+          style={{
+            background: hoveredTemplate === i ? "#1E293B" : "#0F172A",
+            borderRadius: 8, padding: "10px 12px",
+            border: `1px solid ${hoveredTemplate === i ? t.color + "40" : "#1E293B"}`,
+            cursor: "pointer", transition: "all .15s",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 14 }}>{t.icon}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: t.color }}>{t.title}</span>
+          </div>
+          <div style={{ fontSize: 10, color: "#64748B", lineHeight: 1.4 }}>{t.prompt.substring(0, 60)}...</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Chat Action Buttons (for message actions) ───────────────────
+export function ChatActions({ message, onAction }) {
+  const [hoveredAction, setHoveredAction] = useState(null);
+
+  if (!message || message.role !== "assistant") return null;
+
+  const actions = [
+    { id: "copy", label: "Copy", icon: "📋", color: "#64748B" },
+    { id: "email", label: "Email This", icon: "✉", color: "#3B82F6" },
+    { id: "task", label: "Create Task", icon: "📋", color: "#10B981" },
+    { id: "followup", label: "Follow Up", icon: "↩", color: "#F59E0B" },
+    { id: "refine", label: "Refine", icon: "✏", color: "#8B5CF6" },
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+      {actions.map(a => (
+        <button
+          key={a.id}
+          onClick={() => onAction?.(a.id, message.content)}
+          onMouseEnter={() => setHoveredAction(a.id)}
+          onMouseLeave={() => setHoveredAction(null)}
+          style={{
+            padding: "2px 8px", borderRadius: 3,
+            border: `1px solid ${hoveredAction === a.id ? a.color + "40" : "#334155"}`,
+            cursor: "pointer", fontSize: 9, fontWeight: 600,
+            background: hoveredAction === a.id ? a.color + "15" : "transparent",
+            color: hoveredAction === a.id ? a.color : "#64748B",
+            transition: "all .1s",
+            display: "flex", alignItems: "center", gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 10 }}>{a.icon}</span> {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}

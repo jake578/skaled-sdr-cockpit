@@ -14,6 +14,9 @@ import RevenueForecast from "./components/RevenueForecast";
 import PipelineDetail from "./components/PipelineDetail";
 import DealScore from "./components/DealScore";
 import Account360 from "./components/Account360";
+import DealCard from "./components/DealCard";
+import DealTimeline from "./components/DealTimeline";
+import LeadCard from "./components/LeadCard";
 import KanbanBoard from "./components/KanbanBoard";
 import GlobalSearch from "./components/GlobalSearch";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
@@ -172,7 +175,8 @@ export default function App() {
   const [showPipelineDetail, setShowPipelineDetail] = useState(false);
   const [showDeepIntel, setShowDeepIntel] = useState(null);
   const [showMissingContacts, setShowMissingContacts] = useState(null);
-  const [showAccount360, setShowAccount360] = useState(null); // { accountId, accountName }
+  const [showAccount360, setShowAccount360] = useState(null);
+  const [showDealTimeline, setShowDealTimeline] = useState(null); // { accountId, accountName }
   const [showKanban, setShowKanban] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false); // { oppId, accountId, accountName } // { oppId, oppName, accountName }
@@ -1392,7 +1396,32 @@ export default function App() {
                     const db = b.closeDate && b.closeDate !== "—" ? new Date(b.closeDate) : new Date("2099-01-01");
                     return oppSortAsc ? da - db : db - da;
                   }).map(opp => (
-                  <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: selectedOpps.has(opp.id) ? "3px solid #10B981" : undefined }}>
+                  <div key={opp.id} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 4 }}>
+                    <input type="checkbox" style={{ accentColor: "#10B981", marginTop: 14, flexShrink: 0 }}
+                      checked={selectedOpps.has(opp.id)}
+                      onChange={e => { const next = new Set(selectedOpps); if (e.target.checked) next.add(opp.id); else next.delete(opp.id); setSelectedOpps(next); }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <DealCard
+                        deal={{ id: opp.id, name: opp.name, account: opp.account, amount: opp.amount, stage: opp.stage, closeDate: opp.closeDate, probability: opp.probability, forecastCategory: opp.forecastCategory, lastActivity: opp.lastActivity, nextStep: opp.nextStep, source: opp.source, owner: opp.owner, daysInPipeline: opp.daysInStage }}
+                        expanded={expandedAction === `pipe-${opp.id}`}
+                        onToggle={() => setExpandedAction(expandedAction === `pipe-${opp.id}` ? null : `pipe-${opp.id}`)}
+                        onScore={() => setShowDealScore({ oppId: opp.id, oppName: opp.name })}
+                        onInspect={() => setShowDealInspector({ oppId: opp.id, oppName: opp.name })}
+                        onDeepIntel={() => setShowDeepIntel({ oppId: opp.id, oppName: opp.name, accountName: opp.account })}
+                        onEmail={() => setShowEmailComposer({ action: { id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage}`, suggestedAction: `Follow up on ${opp.name}` }, mode: "ai" })}
+                        onDelegate={() => setShowEADelegate({ id: `opp-${opp.id}`, title: opp.name, subtitle: `${opp.account} · ${opp.stage} · ${fmt(opp.amount)}`, suggestedAction: `${opp.nextStep || "Follow up"}` })}
+                        onRelationships={() => setShowRelMap({ accountName: opp.account })}
+                        onAccount360={() => setShowAccount360({ accountName: opp.account })}
+                        onAddContacts={() => setShowMissingContacts({ oppId: opp.id, accountName: opp.account })}
+                        onTimeline={() => setShowDealTimeline({ oppId: opp.id, accountName: opp.account })}
+                        onEdit={() => { if (editingOpp === opp.id) { setEditingOpp(null); } else { setOppEdits({ StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", NextStep: opp.nextStep || "", Group_Forecast_Category__c: opp.forecastCategory || "" }); setEditingOpp(opp.id); } }}
+                      />
+                    </div>
+                  </div>))}
+
+                  {/* OLD OPP CARD CODE REMOVED — replaced by DealCard above */}
+                  {false && (<div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                         <input type="checkbox" style={{ accentColor: "#10B981", marginTop: 4 }}
@@ -1514,8 +1543,7 @@ export default function App() {
                         </div>
                       </div>
                     )}
-                  </div>
-                ))}
+                  </div>)}
               </div>
             )}
 
@@ -1902,6 +1930,10 @@ export default function App() {
           onEditOpp={(id) => { setShowPipelineDetail(false); setView("pipeline"); setPipelineTab("opps"); setTimeout(() => { setEditingOpp(id); const opp = displayOpps.find(o => o.id === id); if (opp) setOppEdits({ StageName: opp.stage || "", CloseDate: opp.closeDate || "", Amount: opp.amount || "", Group_Forecast_Category__c: opp.forecastCategory || "" }); }, 100); }}
           onInspectOpp={(data) => { setShowPipelineDetail(false); setShowDealInspector(data); }}
         />
+      )}
+
+      {showDealTimeline && (
+        <DealTimeline oppId={showDealTimeline.oppId} accountName={showDealTimeline.accountName} onClose={() => setShowDealTimeline(null)} />
       )}
 
       {showAccount360 && (
