@@ -309,40 +309,37 @@ export default function App() {
       fetch("/.netlify/functions/metrics-fast").then(r => r.json()).catch(() => null),
       fetch("/.netlify/functions/actions-fast").then(r => r.json()).catch(() => null),
     ]).then(([metrics, actions]) => {
-      if (metrics && !metrics.error) setLiveMetrics(metrics);
+      if (metrics && !metrics.error) {
+        setLiveMetrics(metrics);
+        try { localStorage.setItem("cockpit_metrics_cache", JSON.stringify({ data: metrics, timestamp: Date.now() })); } catch {}
+      }
       if (actions && (actions.external || actions.dealsAtRisk)) {
         setLiveActions(prev => {
-          // Merge fast results, keep any existing enriched data
-          if (!prev) return actions;
-          return { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] };
+          const merged = prev ? { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] } : actions;
+          try { localStorage.setItem("cockpit_actions_cache", JSON.stringify({ data: merged, timestamp: Date.now() })); } catch {}
+          return merged;
         });
-        setActionsLoading(false);
-      } else {
-        setActionsLoading(false);
       }
+      setActionsLoading(false);
     });
 
-    // ── PHASE 2: Full enrichment (Gmail + Calendar + Claude, background) ──
-    fetch("/.netlify/functions/daily-actions")
-      .then(r => r.json())
-      .then(data => {
-        if (data.external || data.internal) {
-          setLiveActions(data);
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
-        }
-        setActionsLoading(false);
-      })
-      .catch(() => setActionsLoading(false));
+    // Cache fast results
+    // No more daily-actions on load — it takes 10s. Fast endpoints only.
 
-    // Auto-refresh every 5 minutes in background
+    // Auto-refresh fast endpoints every 5 minutes
     const refreshInterval = setInterval(() => {
-      fetch("/.netlify/functions/daily-actions")
-        .then(r => r.json())
-        .then(data => {
-          if (data.external || data.internal) {
-            setLiveActions(data);
-            try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() })); } catch {}
-          }
+      Promise.all([
+        fetch("/.netlify/functions/metrics-fast").then(r => r.json()).catch(() => null),
+        fetch("/.netlify/functions/actions-fast").then(r => r.json()).catch(() => null),
+      ]).then(([metrics, actions]) => {
+        if (metrics && !metrics.error) setLiveMetrics(metrics);
+        if (actions && (actions.external || actions.dealsAtRisk)) {
+          setLiveActions(prev => {
+            if (!prev) return actions;
+            return { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] };
+          });
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: actions, timestamp: Date.now() })); } catch {}
+        }
         }).catch(() => {});
       fetch("/.netlify/functions/live-metrics")
         .then(r => r.json())
