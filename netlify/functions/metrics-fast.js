@@ -38,7 +38,7 @@ export default async (req) => {
     // Past due count
     let pastDueDeals = 0;
     try {
-      const pd = await sfdcQuery(`SELECT COUNT(Id) cnt FROM Opportunity WHERE IsClosed = false AND CloseDate < ${todayStr}`);
+      const pd = await sfdcQuery(`SELECT COUNT(Id) cnt FROM Opportunity WHERE IsClosed = false AND Amount > 0 AND (NOT StageName LIKE 'Closed%') AND Group_Forecast_Category__c != 'Pipeline' AND CloseDate < ${todayStr}`);
       pastDueDeals = pd[0]?.cnt || 0;
     } catch {}
 
