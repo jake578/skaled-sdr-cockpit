@@ -1528,17 +1528,28 @@ export default function App() {
                 </div>
                 {!closedWonOpps && <div style={{ color: "#64748B", textAlign: "center", padding: 40 }}>Connect Salesforce to view closed won deals</div>}
                 {closedWonOpps?.map(opp => (
-                  <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: "3px solid #10B981" }}>
+                  <div key={opp.id} className="card-hover" style={{ ...s.card, borderLeft: "3px solid #10B981", cursor: "pointer" }}
+                    onClick={() => setExpandedAction(expandedAction === `cw-${opp.id}` ? null : `cw-${opp.id}`)}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#F1F5F9" }}>{opp.name}</div>
-                        <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>{opp.account} · {opp.source}</div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2 }}>{opp.account} · {opp.source} · {opp.forecastCategory || ""}</div>
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontSize: 18, fontWeight: 700, color: "#10B981" }}>{fmt(opp.amount)}</div>
                         <div style={{ fontSize: 11, color: "#64748B" }}>Closed {opp.closeDate}</div>
                       </div>
                     </div>
+                    {expandedAction === `cw-${opp.id}` && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #334155", display: "flex", gap: 6, flexWrap: "wrap" }} onClick={e => e.stopPropagation()}>
+                        <a href={`https://skaled.my.salesforce.com/${opp.id}`} target="_blank" rel="noreferrer" style={{ padding: "5px 12px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, background: "#00A1E0", color: "#fff", textDecoration: "none" }}>Open in SFDC</a>
+                        <button style={s.btn("#10B981")} onClick={() => setShowDealInspector({ oppId: opp.id, oppName: opp.name })}>Inspect</button>
+                        <button style={s.btn("#8B5CF6")} onClick={() => setShowDealScore({ oppId: opp.id, oppName: opp.name })}>Score</button>
+                        <button style={{ ...s.btn("#EC4899"), background: "linear-gradient(135deg, #8B5CF6, #EC4899)" }} onClick={() => setShowDeepIntel({ oppId: opp.id, oppName: opp.name, accountName: opp.account })}>Deep Intel</button>
+                        <button style={s.btn("#F59E0B")} onClick={() => setShowRelMap({ accountName: opp.account })}>Relationships</button>
+                        <button style={s.btn("#334155")} onClick={() => setShowAccount360({ accountName: opp.account })}>Account 360</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
