@@ -26,10 +26,11 @@ export default async (req) => {
 
     // Past due deals
     pastDue.forEach(o => {
+      if (!o.Amount || o.Amount === 0) return; // Skip deals with no amount
       const daysOverdue = Math.floor((now - new Date(o.CloseDate)) / 86400000);
-      const amt = o.Amount ? fmt(o.Amount) : null;
+      const amt = fmt(o.Amount);
       const acct = o.Account?.Name || "Unknown";
-      const priority = daysOverdue > 30 ? "critical" : daysOverdue > 14 ? "high" : "medium";
+      const priority = daysOverdue > 60 ? "critical" : daysOverdue > 30 ? "high" : "medium";
 
       actions.dealsAtRisk.push({
         id: `opp-${o.Id}`, type: "follow-up", priority,
@@ -50,6 +51,9 @@ export default async (req) => {
       const daysSince = o.LastActivityDate ? Math.floor((now - new Date(o.LastActivityDate)) / 86400000) : null;
       const amt = o.Amount ? fmt(o.Amount) : null;
       const acct = o.Account?.Name || "Unknown";
+
+      // Only surface deals with real money — skip opps with no amount
+      if (!o.Amount || o.Amount === 0) return;
 
       // Closing in 3 days or less
       if (daysToClose !== null && daysToClose <= 3 && daysToClose >= 0) {
@@ -76,8 +80,8 @@ export default async (req) => {
           suggestedAction: `Check in with ${acct} to confirm timeline. ${o.NextStep ? "Execute: " + o.NextStep : "Define a next step immediately."}`,
         });
 
-      // Stale — no activity in 14+ days (but NOT 999/unknown)
-      } else if (daysSince !== null && daysSince >= 14) {
+      // Stale — no activity in 21+ days (but NOT 999/unknown)
+      } else if (daysSince !== null && daysSince >= 21) {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,
