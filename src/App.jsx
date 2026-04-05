@@ -654,37 +654,52 @@ export default function App() {
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.weightedPipeline) : "..."}</div>
           <div style={s.metricLabel}>Weighted Forecast</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            {liveMetrics ? `${liveMetrics.openDeals} deals` : "Loading"}
+            {liveMetrics ? `${liveMetrics.openDeals} deals · Click for cash flow` : "Loading"}
           </div>
         </div>
         <div className="metric-hover" style={s.metricCard} onClick={() => setShowPipelineDetail(true)}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.totalPipeline) : fmt(pipelineTotal)}</div>
           <div style={s.metricLabel}>Total Pipeline</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            {liveMetrics ? `${liveMetrics.openDeals} open` : `${displayOpps.length} open`}
+            {liveMetrics ? `${liveMetrics.openDeals} open · Click to drill in` : `${displayOpps.length} open`}
           </div>
+          {/* Top 3 opps preview */}
+          {displayOpps.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              {displayOpps.slice(0, 2).map((o, i) => (
+                <div key={i} style={{ fontSize: 9, color: "#64748B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.account} · {fmt(o.amount)}</div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("closedWon"); }}>
           <div style={s.metricVal}>{liveMetrics ? fmt(liveMetrics.wonAmountThisQuarter) : "..."}</div>
           <div style={s.metricLabel}>{liveMetrics?.quarterLabel || "Quarter"} Won</div>
           <div style={{ ...s.metricSub, color: "#10B981" }}>
-            {liveMetrics ? `${liveMetrics.wonThisQuarter} deals closed` : ""}
+            {liveMetrics ? `${liveMetrics.wonThisQuarter} deals · Click for details` : ""}
           </div>
+          {closedWonOpps?.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              {closedWonOpps.slice(0, 2).map((o, i) => (
+                <div key={i} style={{ fontSize: 9, color: "#10B981", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.account} · {fmt(o.amount)}</div>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("dealsAtRisk"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
+        <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("dealsAtRisk"); setOppEdits(d => ({ ...d, priorityFilter: "critical" })); }}>
           <div style={{ ...s.metricVal, color: liveMetrics?.pastDueDeals > 0 ? "#EF4444" : "#10B981" }}>
             {liveMetrics?.pastDueDeals ?? "..."}
           </div>
-          <div style={s.metricLabel}>Past Due Deals</div>
+          <div style={s.metricLabel}>Past Due</div>
           <div style={{ ...s.metricSub, color: "#F59E0B" }}>
-            {liveMetrics ? `${liveMetrics.closingThisWeek} closing this week` : ""}
+            {liveMetrics?.closingThisWeek ? `${liveMetrics.closingThisWeek} closing this week` : ""}
           </div>
         </div>
         <div className="metric-hover" style={s.metricCard} onClick={() => { setView("actions"); setActionQueue("internal"); setOppEdits(d => ({ ...d, priorityFilter: null })); }}>
           <div style={s.metricVal}>{liveMetrics?.meetingsToday ?? "..."}</div>
           <div style={s.metricLabel}>Meetings Today</div>
           <div style={{ ...s.metricSub, color: "#94A3B8" }}>
-            {liveMetrics ? `${liveMetrics.unreadEmails} unread emails` : ""}
+            {liveMetrics ? `${liveMetrics.unreadEmails} unread` : ""}
           </div>
         </div>
         <div className="metric-hover" style={s.metricCard} onClick={() => { setView("pipeline"); setPipelineTab("leads"); }}>

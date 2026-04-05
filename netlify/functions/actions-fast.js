@@ -20,7 +20,7 @@ export default async (req) => {
 
     const [openOpps, newLeads, pastDue] = await Promise.all([
       sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c, NextStep FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') ORDER BY CloseDate ASC LIMIT 50`),
-      sfdcQuery(`SELECT Id, Name, Company, Title, Status, CreatedDate FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`),
+      sfdcQuery(`SELECT Id, Name, Company, Title, Status, CreatedDate, LeadSource, Industry, Description FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`),
       sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 30`),
     ]);
 
@@ -90,19 +90,34 @@ export default async (req) => {
       }
     });
 
-    // New leads
+    // New leads — PE leads are CRITICAL
     newLeads.forEach(l => {
       const daysOld = l.CreatedDate ? Math.floor((now - new Date(l.CreatedDate)) / 86400000) : 0;
+      const company = l.Company || "Unknown";
+      const title = l.Title || "";
+      const industry = l.Industry || "";
+      const source = l.LeadSource || "";
+      const desc = (l.Description || "").toLowerCase();
+
+      // Detect PE: company name, industry, title, description
+      const peKeywords = ["private equity", "pe ", "growth equity", "venture", "capital", "portfolio", "fund", "investment", "partners", "holdings"];
+      const isPE = peKeywords.some(kw => company.toLowerCase().includes(kw) || industry.toLowerCase().includes(kw) || title.toLowerCase().includes(kw) || desc.includes(kw));
+
+      const priority = isPE ? "critical" : daysOld <= 1 ? "high" : "medium";
+
       actions.external.push({
-        id: `lead-${l.Id}`, type: "follow-up",
-        priority: daysOld <= 1 ? "high" : "medium",
-        criticalReason: daysOld <= 1 ? `New lead from ${l.Company || "unknown"} — respond quickly while they're warm` : null,
+        id: `lead-${l.Id}`, type: "follow-up", priority,
+        criticalReason: isPE ? `PE LEAD: ${l.Name} from ${company} — private equity leads are high-value, respond immediately` : (daysOld <= 1 ? `New lead from ${company} — respond while warm` : null),
         title: `New lead: ${l.Name}`,
-        subtitle: `${l.Company || "—"} · ${l.Title || "—"}`,
-        context: `${l.Name}${l.Title ? " (" + l.Title + ")" : ""} from ${l.Company || "unknown"} came in ${daysOld === 0 ? "today" : daysOld + " days ago"}. ${daysOld <= 1 ? "Speed to lead matters — the faster you respond, the higher the conversion rate." : "This lead is " + daysOld + " days old and hasn't been worked yet."}`,
+        subtitle: `${company} · ${title || "—"}${isPE ? " · PE" : ""}${source ? " · " + source : ""}`,
+        context: isPE
+          ? `${l.Name}${title ? " (" + title + ")" : ""} from ${company} — this looks like a private equity lead. ${industry ? "Industry: " + industry + ". " : ""}PE firms bring portfolio-wide opportunities. ${daysOld === 0 ? "Came in today." : "Came in " + daysOld + " days ago."} ${source ? "Source: " + source + "." : ""}`
+          : `${l.Name}${title ? " (" + title + ")" : ""} from ${company} came in ${daysOld === 0 ? "today" : daysOld + " days ago"}. ${daysOld <= 1 ? "Speed to lead matters." : "This lead is " + daysOld + " days old."} ${source ? "Source: " + source + "." : ""}`,
         channel: "salesforce",
-        dueTime: daysOld <= 1 ? "New" : `${daysOld}d old`,
-        suggestedAction: `Research ${l.Company || "the company"} and reach out. ${l.Title ? l.Name + " is " + l.Title + " — tailor your approach to their level." : ""}`,
+        dueTime: isPE ? "PE — Act now" : (daysOld <= 1 ? "New" : `${daysOld}d old`),
+        suggestedAction: isPE
+          ? `Respond immediately. Research ${company} portfolio companies. ${title ? l.Name + " is " + title + " — this is a decision maker." : ""} PE = multi-deal opportunity.`
+          : `Research ${company} and reach out. ${title ? l.Name + " is " + title + "." : ""}`,
       });
     });
 
