@@ -1,4 +1,6 @@
-// FAST actions — SFDC only, every item explains WHY it's important
+// FAST actions — SFDC + quick Calendar check for upcoming meetings
+import { getAccessToken } from "./google-auth.js";
+
 export default async (req) => {
   try {
     const cookieHeader = req.headers.get("cookie") || "";
@@ -8,6 +10,23 @@ export default async (req) => {
     const tokens = JSON.parse(decodeURIComponent(sfdcMatch[1]));
     const now = new Date();
     const todayStr = now.toISOString().split("T")[0];
+
+    // Quick calendar pull — single API call, covers all accounts
+    const accountsWithMeetings = new Set();
+    try {
+      const gtoken = await getAccessToken();
+      const past7 = new Date(now.getTime() - 7 * 86400000).toISOString();
+      const future14 = new Date(now.getTime() + 14 * 86400000).toISOString();
+      const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past7)}&timeMax=${encodeURIComponent(future14)}&maxResults=100&singleEvents=true`, { headers: { Authorization: `Bearer ${gtoken}` } });
+      if (calRes.ok) {
+        const calData = await calRes.json();
+        (calData.items || []).forEach(event => {
+          const title = (event.summary || "").toLowerCase();
+          // Extract company/account names mentioned in meeting titles
+          accountsWithMeetings.add(title);
+        });
+      }
+    } catch {}
 
     const sfdcQuery = async (soql) => {
       const res = await fetch(`${tokens.instance_url}/services/data/v60.0/query?q=${encodeURIComponent(soql)}`, { headers: { Authorization: `Bearer ${tokens.access_token}` } });
@@ -28,10 +47,13 @@ export default async (req) => {
     pastDue.forEach(o => {
       if (!o.Amount || o.Amount === 0) return;
       if ((o.Group_Forecast_Category__c || "").toLowerCase() === "pipeline") return;
+      // If there's a meeting on the books, it's not dead — just needs date update
+      const acctLower = (o.Account?.Name || "").toLowerCase();
+      const hasMeeting = acctLower.length > 2 && [...accountsWithMeetings].some(t => t.includes(acctLower));
       const daysOverdue = Math.floor((now - new Date(o.CloseDate)) / 86400000);
       const amt = fmt(o.Amount);
       const acct = o.Account?.Name || "Unknown";
-      const priority = daysOverdue > 60 ? "critical" : daysOverdue > 30 ? "high" : "medium";
+      const priority = hasMeeting ? "medium" : (daysOverdue > 60 ? "critical" : daysOverdue > 30 ? "high" : "medium");
 
       actions.dealsAtRisk.push({
         id: `opp-${o.Id}`, type: "follow-up", priority,
@@ -59,6 +81,10 @@ export default async (req) => {
       if (!o.Amount || o.Amount === 0) return;
       if ((o.Group_Forecast_Category__c || "").toLowerCase() === "pipeline") return;
 
+      // Skip if there's a meeting on the calendar mentioning this account
+      const acctLower = (o.Account?.Name || "").toLowerCase();
+      const hasMeeting = acctLower.length > 2 && [...accountsWithMeetings].some(t => t.includes(acctLower));
+
       // Closing in 3 days or less
       if (daysToClose !== null && daysToClose <= 3 && daysToClose >= 0) {
         actions.dealsAtRisk.push({
@@ -84,8 +110,8 @@ export default async (req) => {
           suggestedAction: `Check in with ${acct} to confirm timeline. ${o.NextStep ? "Execute: " + o.NextStep : "Define a next step immediately."}`,
         });
 
-      // Stale — no activity in 30+ days (but NOT 999/unknown)
-      } else if (daysSince !== null && daysSince >= 30) {
+      // Stale — no activity in 30+ days, no upcoming meeting, not unknown
+      } else if (daysSince !== null && daysSince >= 30 && !hasMeeting) {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,

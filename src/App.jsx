@@ -160,7 +160,7 @@ export default function App() {
   const [composing, setComposing] = useState(null); // action id being composed
   const [composeData, setComposeData] = useState({ to: "", subject: "", body: "" });
   const [editingOpp, setEditingOpp] = useState(null);
-  const [oppEdits, setOppEdits] = useState({ priorityFilter: "critical" });
+  const [oppEdits, setOppEdits] = useState({ priorityFilter: null });
   // Live metrics
   const [liveMetrics, setLiveMetrics] = useState(() => {
     try { const c = JSON.parse(localStorage.getItem("cockpit_metrics_cache")); if (c?.data) return c.data; } catch {} return null;
