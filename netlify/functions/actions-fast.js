@@ -19,7 +19,7 @@ export default async (req) => {
     const fmt = (n) => "$" + (n || 0).toLocaleString();
 
     const [openOpps, newLeads, pastDue] = await Promise.all([
-      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, Group_Forecast_Category__c, NextStep, Owner.Name FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') ORDER BY CloseDate ASC LIMIT 50`),
+      sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, LastActivityDate, LastModifiedDate, Group_Forecast_Category__c, NextStep, Owner.Name FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') ORDER BY CloseDate ASC LIMIT 50`),
       sfdcQuery(`SELECT Id, Name, Company, Title, Status, CreatedDate, LeadSource, Industry, Description FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`),
       sfdcQuery(`SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Group_Forecast_Category__c, Owner.Name FROM Opportunity WHERE IsClosed = false AND (NOT StageName LIKE 'Closed%') AND CloseDate < ${todayStr} ORDER BY CloseDate ASC LIMIT 30`),
     ]);
@@ -49,7 +49,9 @@ export default async (req) => {
     openOpps.forEach(o => {
       if (pastDue.some(p => p.Id === o.Id)) return;
       const daysToClose = o.CloseDate ? Math.floor((new Date(o.CloseDate) - now) / 86400000) : null;
-      const daysSince = o.LastActivityDate ? Math.floor((now - new Date(o.LastActivityDate)) / 86400000) : null;
+      // Use most recent of LastActivityDate and LastModifiedDate
+      const lastTouch = [o.LastActivityDate, o.LastModifiedDate].filter(Boolean).sort().pop();
+      const daysSince = lastTouch ? Math.floor((now - new Date(lastTouch)) / 86400000) : null;
       const amt = o.Amount ? fmt(o.Amount) : null;
       const acct = o.Account?.Name || "Unknown";
 
@@ -82,8 +84,8 @@ export default async (req) => {
           suggestedAction: `Check in with ${acct} to confirm timeline. ${o.NextStep ? "Execute: " + o.NextStep : "Define a next step immediately."}`,
         });
 
-      // Stale — no activity in 21+ days (but NOT 999/unknown)
-      } else if (daysSince !== null && daysSince >= 21) {
+      // Stale — no activity in 30+ days (but NOT 999/unknown)
+      } else if (daysSince !== null && daysSince >= 30) {
         actions.dealsAtRisk.push({
           id: `opp-${o.Id}`, type: "follow-up", priority: "high",
           title: o.Name,

@@ -356,7 +356,7 @@ export default function App() {
   // Lazy AI enrichment — runs after actions load, doesn't block
   useEffect(() => {
     if (!liveActions) return;
-    const allActions = [...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.dealsAtRisk || [])].slice(0, 12);
+    const allActions = [...(liveActions.dealsAtRisk || []), ...(liveActions.external || []), ...(liveActions.internal || [])].slice(0, 15);
     if (allActions.length === 0) return;
 
     fetch("/.netlify/functions/enrich-actions", {

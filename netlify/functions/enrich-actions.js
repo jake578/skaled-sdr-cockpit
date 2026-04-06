@@ -13,7 +13,7 @@ export default async (req) => {
 
     // For each action, pull quick email/call context
     const enrichedContext = await Promise.all(
-      actions.slice(0, 8).map(async (action, i) => {
+      actions.slice(0, 15).map(async (action, i) => {
         const accountName = action.subtitle?.split("·")[0]?.trim() || "";
         let emailContext = "";
         let callContext = "";
