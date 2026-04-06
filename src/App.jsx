@@ -370,10 +370,16 @@ export default function App() {
             const action = allActions[e.index];
             if (!action) return;
             for (const qKey of ["external", "internal", "dealsAtRisk"]) {
-              const match = (updated[qKey] || []).find(a => a.id === action.id);
-              if (match) {
-                if (e.context) match.context = e.context;
-                if (e.action) match.suggestedAction = e.action;
+              const idx = (updated[qKey] || []).findIndex(a => a.id === action.id);
+              if (idx >= 0) {
+                if (e.shouldRemove) {
+                  // Gmail shows this deal is active — remove from risk queue
+                  updated[qKey] = updated[qKey].filter((_, j) => j !== idx);
+                } else {
+                  const match = updated[qKey][idx];
+                  if (e.context) match.context = e.context;
+                  if (e.action) match.suggestedAction = e.action;
+                }
                 break;
               }
             }

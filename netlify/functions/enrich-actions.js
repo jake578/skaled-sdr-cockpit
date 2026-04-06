@@ -18,7 +18,10 @@ export default async (req) => {
         let emailContext = "";
         let callContext = "";
 
-        // Quick Gmail check — last email subject + who
+        let hasRecentEmail = false;
+        let emailAge = 999;
+
+        // Quick Gmail check — last email subject + who + recency
         if (gtoken && accountName && accountName !== "—" && accountName.length > 2) {
           try {
             const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&q="${accountName}" newer_than:30d`, { headers: { Authorization: `Bearer ${gtoken}` } });
@@ -35,6 +38,12 @@ export default async (req) => {
               const valid = details.filter(Boolean);
               if (valid.length) {
                 emailContext = `Last emails: ${valid.map(e => `"${e.subject}" from ${(e.from || "").split("<")[0].trim()} (${(e.date || "").split(",")[0]})`).join("; ")}`;
+                // Check how recent the last email is
+                try {
+                  const lastDate = new Date(valid[0].date);
+                  emailAge = Math.floor((Date.now() - lastDate.getTime()) / 86400000);
+                  if (emailAge <= 7) hasRecentEmail = true;
+                } catch {}
               }
             } else {
               emailContext = "No emails found in last 30 days.";
@@ -42,13 +51,13 @@ export default async (req) => {
           } catch {}
         }
 
-        return { index: i, title: action.title, subtitle: action.subtitle || "", priority: action.priority, criticalReason: action.criticalReason || "", currentContext: action.context || "", currentAction: action.suggestedAction || "", emailContext, dueTime: action.dueTime || "" };
+        return { index: i, title: action.title, subtitle: action.subtitle || "", priority: action.priority, criticalReason: action.criticalReason || "", currentContext: action.context || "", currentAction: action.suggestedAction || "", emailContext, dueTime: action.dueTime || "", hasRecentEmail, emailAge, channel: action.channel || "" };
       })
     );
 
     // Send all to Claude in one batch
     const summary = enrichedContext.map(e =>
-      `${e.index}. [${e.priority}] ${e.title}\n  Account: ${e.subtitle}\n  Due: ${e.dueTime}\n  ${e.criticalReason ? "Why critical: " + e.criticalReason + "\n  " : ""}Current situation: ${e.currentContext}\n  Email data: ${e.emailContext || "none"}`
+      `${e.index}. [${e.priority}] ${e.title}\n  Account: ${e.subtitle}\n  Due: ${e.dueTime}\n  ${e.criticalReason ? "Why critical: " + e.criticalReason + "\n  " : ""}Current situation: ${e.currentContext}\n  Email data: ${e.emailContext || "No emails found"}\n  Email recency: ${e.hasRecentEmail ? "ACTIVE — emails within " + e.emailAge + " days" : e.emailAge < 999 ? "Last email " + e.emailAge + " days ago" : "No email history"}\n  Channel: ${e.channel}`
     ).join("\n\n");
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -63,7 +72,7 @@ CONTEXT (2-3 sentences): What's actually happening with this deal/person based o
 ACTION (1 sentence): What should Jake do RIGHT NOW? Be specific — "Send Larry a note asking if the Q2 budget cleared" not "Follow up." If there's an email thread, reference it.
 
 Plain text, no markdown, no asterisks. Use names and dollar amounts.`,
-        messages: [{ role: "user", content: `Today is ${new Date().toISOString().split("T")[0]}.\n\n${summary}\n\nReturn JSON array: [{ "index": 0, "context": "what's happening based on email + deal data", "action": "exactly what to do" }]` }],
+        messages: [{ role: "user", content: `Today is ${new Date().toISOString().split("T")[0]}.\n\n${summary}\n\nIMPORTANT: If email data shows recent activity (within 7 days), the deal is NOT stale — adjust your context accordingly. Active email threads = engaged deal.\n\nReturn JSON array: [{ "index": 0, "context": "what's happening based on email + deal data", "action": "exactly what to do", "shouldRemove": false }]\n\nSet shouldRemove=true ONLY if the email data proves this action is no longer needed (e.g., deal shows as stale in SFDC but Gmail shows active emails this week).` }],
       }),
     });
 
