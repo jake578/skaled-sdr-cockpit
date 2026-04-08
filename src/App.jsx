@@ -327,8 +327,34 @@ export default function App() {
       setActionsLoading(false);
     });
 
-    // Cache fast results
-    // No more daily-actions on load — it takes 10s. Fast endpoints only.
+    // ── PHASE 2: Email triage (parallel, 3-5s) ──────────────────
+    // Load cached emails immediately, then fetch fresh in background
+    try {
+      const cachedEmails = JSON.parse(localStorage.getItem("cockpit_emails_cache") || "null");
+      if (cachedEmails?.length) {
+        setLiveActions(prev => {
+          if (!prev) return { external: cachedEmails, internal: [], dealsAtRisk: [] };
+          return { ...prev, external: [...cachedEmails, ...(prev.external || []).filter(a => a.channel !== "email")] };
+        });
+      }
+    } catch {}
+
+    // Fetch fresh emails in background
+    fetch("/.netlify/functions/emails-fast")
+      .then(r => r.json())
+      .then(data => {
+        if (data.emails?.length) {
+          // Merge emails with existing actions, cache them
+          try { localStorage.setItem("cockpit_emails_cache", JSON.stringify(data.emails)); } catch {}
+          setLiveActions(prev => {
+            if (!prev) return { external: data.emails, internal: [], dealsAtRisk: [] };
+            // Replace old emails, keep SFDC items
+            const nonEmailExternal = (prev.external || []).filter(a => a.channel !== "email");
+            return { ...prev, external: [...data.emails, ...nonEmailExternal] };
+          });
+        }
+      })
+      .catch(() => {});
 
     // Auto-refresh fast endpoints every 5 minutes
     const refreshInterval = setInterval(() => {
@@ -418,7 +444,15 @@ export default function App() {
       ...prev,
       [id]: { status, timestamp: Date.now() },
     }));
-    setToast(status === "done" ? "Marked as done — returns in 3 days if unresolved" : status === "skipped" ? "Skipped — returns in 3 days" : "Reopened");
+    // Remove acted-on emails from cache so they don't come back
+    if (id.startsWith("gmail-") && (status === "done" || status === "skipped")) {
+      try {
+        const cached = JSON.parse(localStorage.getItem("cockpit_emails_cache") || "[]");
+        const filtered = cached.filter(e => e.id !== id);
+        localStorage.setItem("cockpit_emails_cache", JSON.stringify(filtered));
+      } catch {}
+    }
+    setToast(status === "done" ? "Done" : status === "skipped" ? "Skipped" : "Reopened");
   }, []);
 
   // 3-day cooldown check: returns true if item should be hidden
