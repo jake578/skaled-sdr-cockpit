@@ -1,78 +1,45 @@
-// Deep Deal Intelligence — master orchestrator combining emails, docs, Chorus, SFDC
+// Deep Deal Intelligence — master synthesizer combining pre-fetched emails, docs, Chorus, SFDC
 import { getAccessToken } from "./google-auth.js";
 
 export default async (req) => {
   if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
 
   try {
-    const { oppId, accountName } = await req.json();
+    const body = await req.json();
+    const { oppId, accountName, mode, emailAnalysis, chorusSentiment, dealScore } = body;
+
     if (!oppId && !accountName) return Response.json({ error: "Need oppId or accountName" }, { status: 400 });
 
     const cookieHeader = req.headers.get("cookie") || "";
     const sfdcMatch = cookieHeader.match(/sfdc_tokens=([^;]+)/);
     const now = new Date();
-    const origin = new URL(req.url).origin;
 
     let oppData = null, contacts = [];
 
     // ── 1. SFDC: Get opp + contacts ─────────────────────────
     if (sfdcMatch && oppId) {
-      const tokens = JSON.parse(decodeURIComponent(sfdcMatch[1]));
-      const sfdcQuery = async (soql) => {
-        const res = await fetch(`${tokens.instance_url}/services/data/v60.0/query?q=${encodeURIComponent(soql)}`, { headers: { Authorization: `Bearer ${tokens.access_token}` } });
-        if (!res.ok) return [];
-        return (await res.json()).records || [];
-      };
-
-      const [opps, roles, allContacts] = await Promise.all([
-        sfdcQuery(`SELECT Name, Account.Name, Account.Industry, Amount, StageName, CloseDate, CreatedDate, LastActivityDate, Group_Forecast_Category__c, NextStep, Probability, Description FROM Opportunity WHERE Id = '${oppId}' LIMIT 1`),
-        sfdcQuery(`SELECT Contact.Name, Contact.Title, Contact.Email, Role FROM OpportunityContactRole WHERE OpportunityId = '${oppId}'`),
-        sfdcQuery(`SELECT Name, Title, Email FROM Contact WHERE AccountId IN (SELECT AccountId FROM Opportunity WHERE Id = '${oppId}') LIMIT 20`),
-      ]);
-
-      if (opps.length) oppData = opps[0];
-      contacts = roles.length > 0 ? roles.map(r => ({ name: r.Contact?.Name, title: r.Contact?.Title, email: r.Contact?.Email, role: r.Role })) : allContacts.map(c => ({ name: c.Name, title: c.Title, email: c.Email }));
-    }
-
-    const acctName = accountName || oppData?.Account?.Name || "";
-    const contactEmails = contacts.filter(c => c.email).map(c => c.email);
-
-    // ── 2. Call deep-email-analysis (internal) ──────────────
-    let emailAnalysis = null;
-    try {
-      const res = await fetch(`${origin}/.netlify/functions/deep-email-analysis`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", cookie: cookieHeader },
-        body: JSON.stringify({ accountName: acctName, contactName: contacts[0]?.name, contactEmail: contactEmails[0] }),
-      });
-      if (res.ok) emailAnalysis = await res.json();
-    } catch {}
-
-    // ── 3. Call chorus-sentiment (internal) ──────────────────
-    let chorusSentiment = null;
-    try {
-      const res = await fetch(`${origin}/.netlify/functions/chorus-sentiment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", cookie: cookieHeader },
-        body: JSON.stringify({ accountName: acctName, contactEmails }),
-      });
-      if (res.ok) chorusSentiment = await res.json();
-    } catch {}
-
-    // ── 4. Call deal-score-v2 (internal) ─────────────────────
-    let dealScore = null;
-    if (oppId) {
       try {
-        const res = await fetch(`${origin}/.netlify/functions/deal-score-v2`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", cookie: cookieHeader },
-          body: JSON.stringify({ oppId }),
-        });
-        if (res.ok) dealScore = await res.json();
+        const tokens = JSON.parse(decodeURIComponent(sfdcMatch[1]));
+        const sfdcQuery = async (soql) => {
+          const res = await fetch(`${tokens.instance_url}/services/data/v60.0/query?q=${encodeURIComponent(soql)}`, { headers: { Authorization: `Bearer ${tokens.access_token}` } });
+          if (!res.ok) return [];
+          return (await res.json()).records || [];
+        };
+
+        const [opps, roles, allContacts] = await Promise.all([
+          sfdcQuery(`SELECT Name, Account.Name, Account.Industry, Amount, StageName, CloseDate, CreatedDate, LastActivityDate, Group_Forecast_Category__c, NextStep, Probability, Description FROM Opportunity WHERE Id = '${oppId}' LIMIT 1`),
+          sfdcQuery(`SELECT Contact.Name, Contact.Title, Contact.Email, Role FROM OpportunityContactRole WHERE OpportunityId = '${oppId}'`),
+          sfdcQuery(`SELECT Name, Title, Email FROM Contact WHERE AccountId IN (SELECT AccountId FROM Opportunity WHERE Id = '${oppId}') LIMIT 20`),
+        ]);
+
+        if (opps.length) oppData = opps[0];
+        contacts = roles.length > 0 ? roles.map(r => ({ name: r.Contact?.Name, title: r.Contact?.Title, email: r.Contact?.Email, role: r.Role })) : allContacts.map(c => ({ name: c.Name, title: c.Title, email: c.Email }));
       } catch {}
     }
 
-    // ── 5. Master AI Synthesis ──────────────────────────────
+    const acctName = accountName || oppData?.Account?.Name || "";
+
+    // ── 2. Master AI Synthesis ──────────────────────────────
     let masterAnalysis = null;
     const contextParts = [];
 
@@ -149,20 +116,6 @@ export default async (req) => {
         closeDate: oppData.CloseDate, forecast: oppData.Group_Forecast_Category__c,
       } : null,
       contacts,
-      dealScore: dealScore ? { score: dealScore.score, grade: dealScore.grade, momentum: dealScore.momentum } : null,
-      emailIntelligence: emailAnalysis ? {
-        totalEmails: emailAnalysis.totalEmails,
-        linksSummary: emailAnalysis.linkSummary,
-        googleDocsRead: emailAnalysis.documents?.googleDocs?.length || 0,
-        gammaDecksFound: emailAnalysis.documents?.gammaDecks?.length || 0,
-        analysis: emailAnalysis.analysis,
-        documents: emailAnalysis.documents,
-      } : null,
-      callIntelligence: chorusSentiment ? {
-        totalCalls: chorusSentiment.totalCalls,
-        calls: chorusSentiment.calls,
-        sentiment: chorusSentiment.sentiment,
-      } : null,
       masterAnalysis,
       generatedAt: now.toISOString(),
     });
