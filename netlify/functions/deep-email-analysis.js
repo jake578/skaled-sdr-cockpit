@@ -12,120 +12,84 @@ export default async (req) => {
     const searchTerms = [contactEmail, contactName, accountName].filter(t => t && t !== "—" && t.length > 2);
     const query = searchTerms.map(t => t.includes("@") ? `from:${t} OR to:${t}` : `"${t}"`).join(" OR ");
 
-    // ── 1. Pull emails with full bodies ─────────────────────
-    const emailRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q=${encodeURIComponent(query + " newer_than:60d")}`, { headers: { Authorization: `Bearer ${gtoken}` } });
+    // ── 1. Pull emails with full bodies (PARALLEL) ────────────
+    const emailRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${encodeURIComponent(query + " newer_than:60d")}`, { headers: { Authorization: `Bearer ${gtoken}` } });
     const emailData = await emailRes.json();
 
-    const emails = [];
-    const allLinks = new Map(); // url → { source, type, count }
+    const allLinks = new Map();
 
-    for (const m of (emailData.messages || []).slice(0, 12)) {
-      try {
-        const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, { headers: { Authorization: `Bearer ${gtoken}` } });
-        if (!res.ok) continue;
-        const msg = await res.json();
-        const headers = {};
-        (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
+    // Fetch all email details in parallel (not sequential)
+    const emailResults = await Promise.all(
+      (emailData.messages || []).slice(0, 8).map(async (m) => {
+        try {
+          const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(5000) });
+          if (!res.ok) return null;
+          const msg = await res.json();
+          const headers = {};
+          (msg.payload?.headers || []).forEach(h => { headers[h.name.toLowerCase()] = h.value; });
+          const body = extractBody(msg.payload);
+          const links = extractLinks(body);
+          return { id: m.id, from: headers.from || "", to: headers.to || "", subject: headers.subject || "", date: headers.date || "", body: body.slice(0, 3000), linkCount: links.length, links: links.slice(0, 5), _links: links, _subject: headers.subject || "email" };
+        } catch { return null; }
+      })
+    );
 
-        const body = extractBody(msg.payload);
+    const emails = emailResults.filter(Boolean);
+    emails.forEach(e => {
+      (e._links || []).forEach(link => {
+        const existing = allLinks.get(link.url) || { url: link.url, type: link.type, sources: [], count: 0 };
+        existing.sources.push(e._subject);
+        existing.count++;
+        allLinks.set(link.url, existing);
+      });
+      delete e._links; delete e._subject;
+    });
 
-        // Extract all links from body
-        const links = extractLinks(body);
-        links.forEach(link => {
-          const existing = allLinks.get(link.url) || { url: link.url, type: link.type, sources: [], count: 0 };
-          existing.sources.push(headers.subject || "email");
-          existing.count++;
-          allLinks.set(link.url, existing);
-        });
+    // ── 2. Follow Google Doc + Gamma links in PARALLEL ──────
+    const googleDocLinks = [...allLinks.values()].filter(l => l.type === "google_doc").slice(0, 3);
+    const gammaLinks = [...allLinks.values()].filter(l => l.type === "gamma").slice(0, 3);
 
-        emails.push({
-          id: m.id,
-          from: headers.from || "",
-          to: headers.to || "",
-          subject: headers.subject || "",
-          date: headers.date || "",
-          body: body.slice(0, 3000),
-          linkCount: links.length,
-          links: links.slice(0, 5),
-        });
-      } catch {}
-    }
+    const [docContents, gammaDecks] = await Promise.all([
+      // Google Docs
+      Promise.all(googleDocLinks.map(async (link) => {
+        try {
+          const docId = extractGoogleDocId(link.url);
+          if (!docId) return null;
+          const res = await fetch(`https://docs.googleapis.com/v1/documents/${docId}`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(5000) });
+          if (!res.ok) return null;
+          const docData = await res.json();
+          let text = "";
+          const extract = (elements) => {
+            (elements || []).forEach(el => {
+              if (el.paragraph?.elements) el.paragraph.elements.forEach(pe => { if (pe.textRun?.content) text += pe.textRun.content; });
+              if (el.table?.tableRows) el.table.tableRows.forEach(row => (row.tableCells || []).forEach(cell => extract(cell.content)));
+            });
+          };
+          extract(docData.body?.content);
+          return { url: link.url, id: docId, title: docData.title || "Untitled", text: text.slice(0, 5000), wordCount: text.split(/\s+/).length, foundIn: link.sources.slice(0, 3) };
+        } catch { return null; }
+      })).then(r => r.filter(Boolean)),
 
-    // ── 2. Follow Google Doc links — read actual content ─────
-    const docContents = [];
-    const googleDocLinks = [...allLinks.values()].filter(l => l.type === "google_doc");
+      // Gamma decks
+      Promise.all(gammaLinks.map(async (link) => {
+        try {
+          const res = await fetch(link.url, { redirect: "follow", headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            const html = await res.text();
+            const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i) || html.match(/og:title[^>]*content="([^"]+)"/i);
+            const descMatch = html.match(/og:description[^>]*content="([^"]+)"/i);
+            return { url: link.url, title: titleMatch?.[1]?.trim() || "Gamma Deck", description: descMatch?.[1]?.trim() || "", foundIn: link.sources.slice(0, 3) };
+          }
+          return { url: link.url, title: "Gamma Deck", description: "", foundIn: link.sources };
+        } catch { return { url: link.url, title: "Gamma Deck", description: "", foundIn: link.sources }; }
+      })),
+    ]);
 
-    for (const link of googleDocLinks.slice(0, 4)) {
-      try {
-        const docId = extractGoogleDocId(link.url);
-        if (!docId) continue;
-
-        const res = await fetch(`https://docs.googleapis.com/v1/documents/${docId}`, { headers: { Authorization: `Bearer ${gtoken}` } });
-        if (!res.ok) continue;
-        const docData = await res.json();
-
-        let text = "";
-        const extract = (elements) => {
-          (elements || []).forEach(el => {
-            if (el.paragraph?.elements) el.paragraph.elements.forEach(pe => { if (pe.textRun?.content) text += pe.textRun.content; });
-            if (el.table?.tableRows) el.table.tableRows.forEach(row => (row.tableCells || []).forEach(cell => extract(cell.content)));
-          });
-        };
-        extract(docData.body?.content);
-
-        docContents.push({
-          url: link.url,
-          title: docData.title || "Untitled",
-          text: text.slice(0, 5000),
-          wordCount: text.split(/\s+/).length,
-          foundIn: link.sources.slice(0, 3),
-        });
-      } catch {}
-    }
-
-    // ── 3. Follow Gamma links — extract deck info ───────────
-    const gammaDecks = [];
-    const gammaLinks = [...allLinks.values()].filter(l => l.type === "gamma");
-
-    for (const link of gammaLinks.slice(0, 4)) {
-      try {
-        // Try to fetch the Gamma page to get metadata
-        const res = await fetch(link.url, { redirect: "follow", headers: { "User-Agent": "Mozilla/5.0" } });
-        if (res.ok) {
-          const html = await res.text();
-          // Extract title from meta tags or title tag
-          const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i) || html.match(/og:title[^>]*content="([^"]+)"/i);
-          const descMatch = html.match(/og:description[^>]*content="([^"]+)"/i) || html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/i);
-
-          gammaDecks.push({
-            url: link.url,
-            title: titleMatch?.[1]?.trim() || "Gamma Deck",
-            description: descMatch?.[1]?.trim() || "",
-            foundIn: link.sources.slice(0, 3),
-          });
-        } else {
-          gammaDecks.push({ url: link.url, title: "Gamma Deck", description: "", foundIn: link.sources });
-        }
-      } catch {
-        gammaDecks.push({ url: link.url, title: "Gamma Deck", description: "", foundIn: link.sources });
-      }
-    }
-
-    // ── 4. Follow Google Sheets links ───────────────────────
-    const sheetLinks = [...allLinks.values()].filter(l => l.type === "google_sheet");
-    const sheets = [];
-    for (const link of sheetLinks.slice(0, 2)) {
-      sheets.push({ url: link.url, title: "Google Sheet", foundIn: link.sources });
-    }
-
-    // ── 5. Follow Google Slides links ───────────────────────
-    const slideLinks = [...allLinks.values()].filter(l => l.type === "google_slides");
-    const slides = [];
-    for (const link of slideLinks.slice(0, 2)) {
-      slides.push({ url: link.url, title: "Google Slides", foundIn: link.sources });
-    }
-
-    // ── 6. Collect all other links ──────────────────────────
+    // ── 3. Collect other links ──────────────────────────────
+    const sheetLinks = [...allLinks.values()].filter(l => l.type === "google_sheet").slice(0, 2);
+    const sheets = sheetLinks.map(l => ({ url: l.url, title: "Google Sheet", foundIn: l.sources }));
+    const slideLinks = [...allLinks.values()].filter(l => l.type === "google_slides").slice(0, 2);
+    const slides = slideLinks.map(l => ({ url: l.url, title: "Google Slides", foundIn: l.sources }));
     const otherLinks = [...allLinks.values()].filter(l => !["google_doc", "gamma", "google_sheet", "google_slides", "skaled_internal"].includes(l.type)).slice(0, 10);
 
     // ── 7. AI analysis of everything ────────────────────────

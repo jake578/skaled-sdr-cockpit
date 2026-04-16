@@ -63,36 +63,32 @@ export default async (req) => {
       return Response.json({ calls: [], sentiment: null, analysis: "No Chorus calls found for this account." });
     }
 
-    // ── 2. Fetch transcripts for matched calls ──────────────
-    for (const call of matchedCalls.slice(0, 3)) {
+    // ── 2. Fetch transcripts for matched calls (PARALLEL) ─────
+    await Promise.all(matchedCalls.slice(0, 3).map(async (call) => {
       try {
-        const res = await fetch(`https://chorus.ai/api/v1/conversations/${call.engagementId}`, { headers: chorusV1, signal: AbortSignal.timeout(15000) });
-        if (!res.ok) continue;
+        const res = await fetch(`https://chorus.ai/api/v1/conversations/${call.engagementId}`, { headers: chorusV1, signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return;
         const data = await res.json();
         const attrs = data.data?.attributes || {};
-        const recording = attrs.recording || {};
-        const utterances = recording.utterances || [];
+        const utterances = (attrs.recording || {}).utterances || [];
 
         call.summary = (attrs.summary || "").replace(/<br\/?>/g, "\n");
         call.actionItems = attrs.action_items || [];
         call.trackerHits = attrs.tracker_hits || [];
 
-        // Build transcript with speaker attribution
         const transcript = [];
         const speakerTalkTime = {};
-
         for (const u of utterances) {
           const speaker = u.speaker_name || "Unknown";
           const text = u.snippet || "";
           transcript.push({ speaker, text });
           speakerTalkTime[speaker] = (speakerTalkTime[speaker] || 0) + text.split(/\s+/).length;
         }
-
-        call.transcript = transcript.slice(0, 100); // Cap for token management
+        call.transcript = transcript.slice(0, 100);
         call.speakerTalkTime = speakerTalkTime;
         call.totalUtterances = utterances.length;
       } catch {}
-    }
+    }));
 
     // ── 3. AI Sentiment Analysis ────────────────────────────
     let sentimentAnalysis = null;

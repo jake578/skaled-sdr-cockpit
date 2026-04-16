@@ -50,29 +50,49 @@ export default async (req) => {
 
     try {
       gtoken = await getAccessToken();
+    } catch {}
 
-      // Search by account name — catches all emails mentioning this company
-      const searches = [
-        `"${accountName}" newer_than:30d`,
-      ];
+    // ── Run Gmail, Calendar, Drive ALL in parallel ──────────
+    const searches = [`"${accountName}" newer_than:30d`];
+    const knownEmails = [...sfdcEmailSet].slice(0, 3);
+    if (knownEmails.length) searches.push(knownEmails.map(e => `from:${e} OR to:${e}`).join(" OR ") + " newer_than:30d");
 
-      // Also search by known contact emails for precision
-      const knownEmails = [...sfdcEmailSet].slice(0, 3);
-      if (knownEmails.length) searches.push(knownEmails.map(e => `from:${e} OR to:${e}`).join(" OR ") + " newer_than:30d");
+    let meetingsLast30d = 0, meetingsUpcoming = 0, nextMeeting = null, meetingList = [];
+    let docCount = 0, docList = [];
 
-      for (const query of searches) {
+    const processEmailDetails = (details) => {
+      details.filter(Boolean).forEach(d => {
+        const dateStr = d.date ? new Date(d.date).toISOString().split("T")[0] : null;
+        if (dateStr && (!lastEmailDate || dateStr > lastEmailDate)) lastEmailDate = dateStr;
+        if (d.internalDate) { const msgAge = (now.getTime() - parseInt(d.internalDate)) / 86400000; if (msgAge <= 7) emailCount7d++; }
+        if (recentEmails.length < 6) recentEmails.push({ subject: d.subject || "—", from: (d.from || "").split("<")[0].trim().replace(/"/g, ""), date: dateStr || "—" });
+        const allAddrs = [d.from, d.to, d.cc].filter(Boolean).join(", ");
+        const found = allAddrs.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g) || [];
+        found.forEach(email => {
+          const lower = email.toLowerCase();
+          if (lower.includes("skaled.com") || lower.includes("noreply") || lower.includes("no-reply") || lower.includes("calendar-notification") || lower.includes("google.com") || lower.includes("mailer-daemon")) return;
+          const nameMatch = allAddrs.match(new RegExp(`([^<,;]+?)\\s*<${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}>`, "i"));
+          const name = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : "";
+          const existing = allDiscoveredContacts.get(lower) || { email: lower, name: "", count: 0, lastDate: null, inSFDC: sfdcEmailSet.has(lower) };
+          existing.count++;
+          if (name && !existing.name) existing.name = name;
+          if (dateStr && (!existing.lastDate || dateStr > existing.lastDate)) existing.lastDate = dateStr;
+          allDiscoveredContacts.set(lower, existing);
+        });
+      });
+    };
+
+    if (gtoken) {
+      const gmailSearchPromises = searches.map(async (query) => {
         try {
-          const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=30&q=${encodeURIComponent(query)}`, { headers: { Authorization: `Bearer ${gtoken}` } });
+          const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q=${encodeURIComponent(query)}`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(6000) });
           const data = await res.json();
-          if (!data.messages?.length) continue;
-
+          if (!data.messages?.length) return;
           emailCount30d = Math.max(emailCount30d, data.messages.length);
-
-          // Fetch details for each message — extract contacts
           const details = await Promise.all(
-            data.messages.slice(0, 12).map(async m => {
+            data.messages.slice(0, 8).map(async m => {
               try {
-                const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Date&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${gtoken}` } });
+                const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Date&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(4000) });
                 if (!r.ok) return null;
                 const msg = await r.json();
                 const h = {};
@@ -81,75 +101,36 @@ export default async (req) => {
               } catch { return null; }
             })
           );
-
-          details.filter(Boolean).forEach(d => {
-            const dateStr = d.date ? new Date(d.date).toISOString().split("T")[0] : null;
-            if (dateStr && (!lastEmailDate || dateStr > lastEmailDate)) lastEmailDate = dateStr;
-
-            // Check if within 7 days
-            if (d.internalDate) {
-              const msgAge = (now.getTime() - parseInt(d.internalDate)) / 86400000;
-              if (msgAge <= 7) emailCount7d++;
-            }
-
-            if (recentEmails.length < 6) {
-              recentEmails.push({ subject: d.subject || "—", from: (d.from || "").split("<")[0].trim().replace(/"/g, ""), date: dateStr || "—" });
-            }
-
-            // Extract every email address
-            const allAddrs = [d.from, d.to, d.cc].filter(Boolean).join(", ");
-            const found = allAddrs.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g) || [];
-
-            found.forEach(email => {
-              const lower = email.toLowerCase();
-              // Skip internal and system emails
-              if (lower.includes("skaled.com") || lower.includes("noreply") || lower.includes("no-reply") || lower.includes("calendar-notification") || lower.includes("google.com") || lower.includes("mailer-daemon")) return;
-
-              const nameMatch = allAddrs.match(new RegExp(`([^<,;]+?)\\s*<${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}>`, "i"));
-              const name = nameMatch ? nameMatch[1].trim().replace(/"/g, "") : "";
-
-              const existing = allDiscoveredContacts.get(lower) || { email: lower, name: "", count: 0, lastDate: null, inSFDC: sfdcEmailSet.has(lower) };
-              existing.count++;
-              if (name && !existing.name) existing.name = name;
-              if (dateStr && (!existing.lastDate || dateStr > existing.lastDate)) existing.lastDate = dateStr;
-              allDiscoveredContacts.set(lower, existing);
-            });
-          });
+          processEmailDetails(details);
         } catch {}
-      }
-    } catch {}
+      });
 
-    const allContacts = [...allDiscoveredContacts.values()].sort((a, b) => b.count - a.count);
-    const inSFDC = allContacts.filter(c => c.inSFDC);
-    const notInSFDC = allContacts.filter(c => !c.inSFDC);
-    const totalStakeholders = allContacts.length;
+      const calendarPromise = accountName.length > 2 ? (async () => {
+        try {
+          const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
+          const future30 = new Date(now.getTime() + 30 * 86400000).toISOString();
+          const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(future30)}&maxResults=50&singleEvents=true&orderBy=startTime&q=${encodeURIComponent(accountName)}`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(5000) });
+          if (res.ok) {
+            const data = await res.json();
+            const items = data.items || [];
+            meetingsLast30d = items.filter(e => new Date(e.start?.dateTime || e.start?.date) < now).length;
+            const upcoming = items.filter(e => new Date(e.start?.dateTime || e.start?.date) >= now);
+            meetingsUpcoming = upcoming.length;
+            if (upcoming.length) nextMeeting = upcoming[0].start?.dateTime?.split("T")[0] || upcoming[0].start?.date;
+            meetingList = items.slice(0, 5).map(e => ({ title: e.summary || "—", date: (e.start?.dateTime || e.start?.date || "").split("T")[0], isPast: new Date(e.start?.dateTime || e.start?.date) < now }));
+          }
+        } catch {}
+      })() : Promise.resolve();
 
-    // ── Calendar meetings ───────────────────────────────────
-    let meetingsLast30d = 0, meetingsUpcoming = 0, nextMeeting = null, meetingList = [];
-    if (gtoken && accountName.length > 2) {
-      try {
-        const past30 = new Date(now.getTime() - 30 * 86400000).toISOString();
-        const future30 = new Date(now.getTime() + 30 * 86400000).toISOString();
-        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(past30)}&timeMax=${encodeURIComponent(future30)}&maxResults=50&singleEvents=true&orderBy=startTime&q=${encodeURIComponent(accountName)}`, { headers: { Authorization: `Bearer ${gtoken}` } });
-        if (res.ok) {
-          const data = await res.json();
-          const items = data.items || [];
-          meetingsLast30d = items.filter(e => new Date(e.start?.dateTime || e.start?.date) < now).length;
-          const upcoming = items.filter(e => new Date(e.start?.dateTime || e.start?.date) >= now);
-          meetingsUpcoming = upcoming.length;
-          if (upcoming.length) nextMeeting = upcoming[0].start?.dateTime?.split("T")[0] || upcoming[0].start?.date;
-          meetingList = items.slice(0, 5).map(e => ({ title: e.summary || "—", date: (e.start?.dateTime || e.start?.date || "").split("T")[0], isPast: new Date(e.start?.dateTime || e.start?.date) < now }));
-        }
-      } catch {}
-    }
+      const drivePromise = accountName.length > 2 ? (async () => {
+        try {
+          const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name contains '${accountName.replace(/'/g, "")}' and trashed = false`)}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=5`, { headers: { Authorization: `Bearer ${gtoken}` }, signal: AbortSignal.timeout(5000) });
+          if (res.ok) { const data = await res.json(); docCount = (data.files || []).length; docList = (data.files || []).map(f => ({ name: f.name, modified: f.modifiedTime?.split("T")[0] })); }
+        } catch {}
+      })() : Promise.resolve();
 
-    // ── Drive docs ──────────────────────────────────────────
-    let docCount = 0, docList = [];
-    if (gtoken && accountName.length > 2) {
-      try {
-        const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name contains '${accountName.replace(/'/g, "")}' and trashed = false`)}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=5`, { headers: { Authorization: `Bearer ${gtoken}` } });
-        if (res.ok) { const data = await res.json(); docCount = (data.files || []).length; docList = (data.files || []).map(f => ({ name: f.name, modified: f.modifiedTime?.split("T")[0] })); }
-      } catch {}
+      // ALL Google API calls run in parallel
+      await Promise.all([...gmailSearchPromises, calendarPromise, drivePromise]);
     }
 
     // ── Calculate metrics ───────────────────────────────────

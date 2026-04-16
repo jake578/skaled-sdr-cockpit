@@ -4,6 +4,13 @@ const strip = (s) => (s || "").replace(/\*\*/g, "").replace(/\*/g, "");
 const healthColor = { healthy: "#10B981", at_risk: "#F59E0B", critical: "#EF4444", unknown: "#64748B" };
 const sentColor = { positive: "#10B981", warming: "#10B981", neutral: "#94A3B8", stable: "#94A3B8", negative: "#EF4444", cooling: "#EF4444", mixed: "#F59E0B", no_data: "#64748B" };
 
+// Safe fetch: returns parsed JSON or null (handles HTML error pages, 502s, etc)
+const safeFetch = async (url, opts) => {
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  try { return JSON.parse(text); } catch { return { error: `${r.status}: ${text.slice(0, 100)}` }; }
+};
+
 export default function DeepDealIntel({ oppId, oppName, accountName, onClose }) {
   const [emailData, setEmailData] = useState(null);
   const [chorusData, setChorusData] = useState(null);
@@ -17,30 +24,32 @@ export default function DeepDealIntel({ oppId, oppName, accountName, onClose }) 
   // Kick off all 3 data fetches in parallel from the client
   useEffect(() => {
     // 1. Email analysis
-    fetch("/.netlify/functions/deep-email-analysis", {
+    safeFetch("/.netlify/functions/deep-email-analysis", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accountName, contactName: null, contactEmail: null }),
-    }).then(r => r.json()).then(d => {
-      if (d.error) { setLoadState(p => ({ ...p, emails: "error" })); return; }
+    }).then(d => {
+      if (d.error) { setError(prev => prev || `Emails: ${d.error}`); setLoadState(p => ({ ...p, emails: "error" })); return; }
       setEmailData(d);
       setLoadState(p => ({ ...p, emails: "done" }));
     }).catch(() => setLoadState(p => ({ ...p, emails: "error" })));
 
     // 2. Chorus sentiment
-    fetch("/.netlify/functions/chorus-sentiment", {
+    safeFetch("/.netlify/functions/chorus-sentiment", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accountName, contactEmails: [] }),
-    }).then(r => r.json()).then(d => {
+    }).then(d => {
+      if (d.error) { setLoadState(p => ({ ...p, chorus: "error" })); return; }
       setChorusData(d);
       setLoadState(p => ({ ...p, chorus: "done" }));
     }).catch(() => setLoadState(p => ({ ...p, chorus: "error" })));
 
     // 3. Deal score
     if (oppId) {
-      fetch("/.netlify/functions/deal-score-v2", {
+      safeFetch("/.netlify/functions/deal-score-v2", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ oppId }),
-      }).then(r => r.json()).then(d => {
+      }).then(d => {
+        if (d.error) { setLoadState(p => ({ ...p, score: "error" })); return; }
         setScoreData(d);
         setLoadState(p => ({ ...p, score: "done" }));
       }).catch(() => setLoadState(p => ({ ...p, score: "error" })));
@@ -57,7 +66,7 @@ export default function DeepDealIntel({ oppId, oppName, accountName, onClose }) 
       synthesisRan.current = true;
       setLoadState(p => ({ ...p, synthesis: "loading" }));
 
-      fetch("/.netlify/functions/deep-deal-intelligence", {
+      safeFetch("/.netlify/functions/deep-deal-intelligence", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           oppId, accountName, mode: "synthesize",
@@ -65,7 +74,7 @@ export default function DeepDealIntel({ oppId, oppName, accountName, onClose }) 
           chorusSentiment: chorusData || null,
           dealScore: scoreData || null,
         }),
-      }).then(r => r.json()).then(d => {
+      }).then(d => {
         if (d.error) { setError(d.error); setLoadState(p => ({ ...p, synthesis: "error" })); return; }
         setSynthesis(d);
         setLoadState(p => ({ ...p, synthesis: "done" }));
