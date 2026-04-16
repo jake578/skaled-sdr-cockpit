@@ -1025,6 +1025,9 @@ export default function App() {
                   {expanded && (
                     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #334155", animation: "fadeIn .2s" }} onClick={e => e.stopPropagation()}>
 
+                      {/* Inline context — auto-loads when expanded */}
+                      <ActionContext action={action} />
+
                       {/* Critical: prompt to auto-draft */}
                       {action.priority === "critical" && status === "pending" && (action.type === "email" || action.type === "follow-up") && (
                         <div style={{
@@ -2033,6 +2036,101 @@ export default function App() {
             setToast("Task added");
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// Inline context loader — shows full context when action card is expanded
+function ActionContext({ action }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const accountName = action.subtitle?.split("·")[0]?.trim() || "";
+    const contactName = action.contact || "";
+
+    // For email actions, show the email body
+    if (action.channel === "email" && action.gmailId) {
+      fetch(`/.netlify/functions/gmail-activities`)
+        .then(r => r.json())
+        .then(d => {
+          const relevant = (d.activities || []).filter(a => {
+            const text = `${a.contact} ${a.subject}`.toLowerCase();
+            return contactName && text.includes(contactName.toLowerCase());
+          }).slice(0, 3);
+          setData({ type: "email", items: relevant });
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+      return;
+    }
+
+    // For deal actions, fetch interaction context
+    if (accountName && accountName !== "—" && accountName.length > 2) {
+      fetch("/.netlify/functions/interaction-context", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactName, accountName }),
+      })
+        .then(r => r.json())
+        .then(d => { setData({ type: "deal", ...d }); setLoading(false); })
+        .catch(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [action.id]);
+
+  if (loading) return <div style={{ fontSize: 11, color: "#64748B", marginBottom: 10, padding: "8px 0" }}>Loading context...</div>;
+  if (!data) return null;
+
+  const strip = (s) => (s || "").replace(/\*\*/g, "").replace(/\*/g, "");
+
+  return (
+    <div style={{ background: "#0F172A", borderRadius: 8, padding: 12, marginBottom: 12, border: "1px solid #1E293B" }}>
+      {/* AI Summary */}
+      {data.summary && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: "#8B5CF6", fontWeight: 700, marginBottom: 3, textTransform: "uppercase" }}>Context</div>
+          <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.5 }}>{strip(data.summary)}</div>
+        </div>
+      )}
+
+      {/* Recent emails */}
+      {(data.emails?.length > 0 || data.items?.length > 0) && (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 10, color: "#3B82F6", fontWeight: 700, marginBottom: 3, textTransform: "uppercase" }}>Recent Emails</div>
+          {(data.emails || data.items || []).slice(0, 3).map((e, i) => (
+            <div key={i} style={{ fontSize: 11, color: "#94A3B8", marginBottom: 3, paddingLeft: 8, borderLeft: "2px solid #3B82F620" }}>
+              <span style={{ color: "#F1F5F9" }}>{e.subject || "—"}</span>
+              <span style={{ color: "#64748B", marginLeft: 6 }}>{e.from ? (typeof e.from === "string" ? e.from.split("<")[0].trim() : "") : e.contact || ""} · {e.date?.split(",")[0] || e.date || ""}</span>
+              {e.body && <div style={{ fontSize: 10, color: "#64748B", marginTop: 2 }}>{strip(e.body).slice(0, 150)}...</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Recent calls */}
+      {data.calls?.length > 0 && (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 10, color: "#8B5CF6", fontWeight: 700, marginBottom: 3, textTransform: "uppercase" }}>Recent Calls</div>
+          {data.calls.slice(0, 2).map((c, i) => (
+            <div key={i} style={{ fontSize: 11, color: "#94A3B8", paddingLeft: 8, borderLeft: "2px solid #8B5CF620", marginBottom: 2 }}>
+              {c.subject || "Call"} · {c.date || "—"} · {c.contact || "—"}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Meetings */}
+      {data.meetings?.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: "#F59E0B", fontWeight: 700, marginBottom: 3, textTransform: "uppercase" }}>Meetings</div>
+          {data.meetings.slice(0, 2).map((m, i) => (
+            <div key={i} style={{ fontSize: 11, color: "#94A3B8", paddingLeft: 8, borderLeft: "2px solid #F59E0B20", marginBottom: 2 }}>
+              {m.subject || "Meeting"} · {m.date || "—"} {m.isPast === false ? "(upcoming)" : ""}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
