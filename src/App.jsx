@@ -328,29 +328,44 @@ export default function App() {
     });
 
     // ── PHASE 2: Email triage (parallel, 3-5s) ──────────────────
-    // Load cached emails immediately, then fetch fresh in background
+    // Load cached emails immediately (external + internal), then fetch fresh in background
     try {
       const cachedEmails = JSON.parse(localStorage.getItem("cockpit_emails_cache") || "null");
-      if (cachedEmails?.length) {
+      const cachedInternal = JSON.parse(localStorage.getItem("cockpit_internal_emails_cache") || "null");
+      if (cachedEmails?.length || cachedInternal?.length) {
         setLiveActions(prev => {
-          if (!prev) return { external: cachedEmails, internal: [], dealsAtRisk: [] };
-          return { ...prev, external: [...cachedEmails, ...(prev.external || []).filter(a => a.channel !== "email")] };
+          const base = prev || { external: [], internal: [], dealsAtRisk: [] };
+          return {
+            ...base,
+            external: [...(cachedEmails || []), ...(base.external || []).filter(a => a.channel !== "email")],
+            internal: [...(cachedInternal || []), ...(base.internal || []).filter(a => a.channel !== "email")],
+          };
         });
       }
     } catch {}
 
-    // Fetch fresh emails in background
+    // Fetch fresh emails in background (external + internal from Skaled team)
     fetch("/.netlify/functions/emails-fast")
       .then(r => r.json())
       .then(data => {
-        if (data.emails?.length) {
-          // Merge emails with existing actions, cache them
+        const hasExternal = data.emails?.length;
+        const hasInternal = data.internalEmails?.length;
+        if (hasExternal) {
           try { localStorage.setItem("cockpit_emails_cache", JSON.stringify(data.emails)); } catch {}
+        }
+        if (hasInternal) {
+          try { localStorage.setItem("cockpit_internal_emails_cache", JSON.stringify(data.internalEmails)); } catch {}
+        }
+        if (hasExternal || hasInternal) {
           setLiveActions(prev => {
-            if (!prev) return { external: data.emails, internal: [], dealsAtRisk: [] };
-            // Replace old emails, keep SFDC items
-            const nonEmailExternal = (prev.external || []).filter(a => a.channel !== "email");
-            return { ...prev, external: [...data.emails, ...nonEmailExternal] };
+            const base = prev || { external: [], internal: [], dealsAtRisk: [] };
+            const nonEmailExternal = (base.external || []).filter(a => a.channel !== "email");
+            const nonEmailInternal = (base.internal || []).filter(a => a.channel !== "email");
+            return {
+              ...base,
+              external: [...(data.emails || []), ...nonEmailExternal],
+              internal: [...(data.internalEmails || []), ...nonEmailInternal],
+            };
           });
         }
       })
@@ -366,9 +381,13 @@ export default function App() {
         if (actions && (actions.external || actions.dealsAtRisk)) {
           setLiveActions(prev => {
             if (!prev) return actions;
-            return { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] };
+            return {
+              ...actions,
+              external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")],
+              internal: prev.internal || [],
+            };
           });
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ data: actions, timestamp: Date.now() })); } catch {}
+          try { localStorage.setItem("cockpit_actions_cache", JSON.stringify({ data: actions, timestamp: Date.now() })); } catch {}
         }
         }).catch(() => {});
       fetch("/.netlify/functions/live-metrics")
@@ -444,12 +463,13 @@ export default function App() {
       ...prev,
       [id]: { status, timestamp: Date.now() },
     }));
-    // Remove acted-on emails from cache so they don't come back
+    // Remove acted-on emails from both caches so they don't come back
     if (id.startsWith("gmail-") && (status === "done" || status === "skipped")) {
       try {
         const cached = JSON.parse(localStorage.getItem("cockpit_emails_cache") || "[]");
-        const filtered = cached.filter(e => e.id !== id);
-        localStorage.setItem("cockpit_emails_cache", JSON.stringify(filtered));
+        localStorage.setItem("cockpit_emails_cache", JSON.stringify(cached.filter(e => e.id !== id)));
+        const cachedInternal = JSON.parse(localStorage.getItem("cockpit_internal_emails_cache") || "[]");
+        localStorage.setItem("cockpit_internal_emails_cache", JSON.stringify(cachedInternal.filter(e => e.id !== id)));
       } catch {}
     }
     setToast(status === "done" ? "Done" : status === "skipped" ? "Skipped" : "Reopened");
