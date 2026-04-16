@@ -74,6 +74,7 @@ const TEAM = [
   { name: "Wendy Gaskill", email: "wendy@skaled.com", role: "Chief of Staff" },
   { name: "Erika", email: "erika@skaled.com", role: "Operations" },
   { name: "Megan", email: "megan@skaled.com", role: "Team — NAM" },
+  { name: "Kara Burd", email: "kara.burd@skaled.com", role: "SDR" },
 ];
 
 export default function EADelegate({ action, onClose, onDelegated }) {
