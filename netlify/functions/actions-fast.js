@@ -5,7 +5,7 @@ export default async (req) => {
   try {
     const cookieHeader = req.headers.get("cookie") || "";
     const sfdcMatch = cookieHeader.match(/sfdc_tokens=([^;]+)/);
-    if (!sfdcMatch) return Response.json({ external: [], internal: [], dealsAtRisk: [] });
+    if (!sfdcMatch) return Response.json({ external: [], internal: [], dealsAtRisk: [], leads: [], inboundLeads: [] });
 
     const tokens = JSON.parse(decodeURIComponent(sfdcMatch[1]));
     const now = new Date();
@@ -34,7 +34,7 @@ export default async (req) => {
       return (await res.json()).records || [];
     };
 
-    const actions = { external: [], internal: [], dealsAtRisk: [] };
+    const actions = { external: [], internal: [], dealsAtRisk: [], leads: [], inboundLeads: [] };
     const fmt = (n) => "$" + (n || 0).toLocaleString();
 
     const [openOpps, newLeads, pastDue] = await Promise.all([
@@ -139,8 +139,13 @@ export default async (req) => {
 
       const priority = isPE ? "critical" : daysOld <= 1 ? "high" : "medium";
 
-      actions.external.push({
-        id: `lead-${l.Id}`, type: "follow-up", priority,
+      const inboundKeywords = ["web", "inbound", "form", "demo", "contact us", "download", "webinar", "newsletter", "landing", "chat", "referral"];
+      const sourceLower = (source || "").toLowerCase();
+      const descInbound = ["filled out", "requested", "downloaded", "submitted", "signed up"].some(k => desc.includes(k));
+      const isInbound = !!source && (inboundKeywords.some(k => sourceLower.includes(k)) || descInbound);
+
+      (isInbound ? actions.inboundLeads : actions.leads).push({
+        id: `lead-${l.Id}`, type: "follow-up", priority, isInbound, leadSource: source || null,
         criticalReason: isPE ? `PE LEAD: ${l.Name} from ${company} — private equity leads are high-value, respond immediately` : (daysOld <= 1 ? `New lead from ${company} — respond while warm` : null),
         title: `New lead: ${l.Name}`,
         subtitle: `${company} · ${title || "—"}${isPE ? " · PE" : ""}${source ? " · " + source : ""}`,
@@ -158,10 +163,12 @@ export default async (req) => {
     const po = { critical: 0, high: 1, medium: 2, low: 3 };
     actions.external.sort((a, b) => (po[a.priority] ?? 3) - (po[b.priority] ?? 3));
     actions.dealsAtRisk.sort((a, b) => (po[a.priority] ?? 3) - (po[b.priority] ?? 3));
+    actions.leads.sort((a, b) => (po[a.priority] ?? 3) - (po[b.priority] ?? 3));
+    actions.inboundLeads.sort((a, b) => (po[a.priority] ?? 3) - (po[b.priority] ?? 3));
 
     return Response.json(actions);
   } catch (e) {
-    return Response.json({ external: [], internal: [], dealsAtRisk: [], error: e.message });
+    return Response.json({ external: [], internal: [], dealsAtRisk: [], leads: [], inboundLeads: [], error: e.message });
   }
 };
 

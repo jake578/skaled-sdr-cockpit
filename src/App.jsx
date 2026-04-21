@@ -147,7 +147,19 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [actionQueue, setActionQueue] = useState("external");
   const [liveActions, setLiveActions] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); if (c?.data) return c.data; } catch {} return null;
+    try {
+      const c = JSON.parse(localStorage.getItem("cockpit_actions_cache"));
+      if (c?.data) {
+        const d = c.data;
+        const leadsFromExt = (d.external || []).filter(a => a.id?.startsWith("lead-"));
+        if (leadsFromExt.length || !d.leads) {
+          d.external = (d.external || []).filter(a => !a.id?.startsWith("lead-"));
+          d.leads = [...(d.leads || []), ...leadsFromExt];
+        }
+        if (!d.inboundLeads) d.inboundLeads = [];
+        return d;
+      }
+    } catch {} return null;
   });
   const [actionsLoading, setActionsLoading] = useState(() => {
     try { const c = JSON.parse(localStorage.getItem("cockpit_actions_cache")); return !c?.data; } catch { return true; }
@@ -317,9 +329,9 @@ export default function App() {
         setLiveMetrics(metrics);
         try { localStorage.setItem("cockpit_metrics_cache", JSON.stringify({ data: metrics, timestamp: Date.now() })); } catch {}
       }
-      if (actions && (actions.external || actions.dealsAtRisk)) {
+      if (actions && (actions.external || actions.dealsAtRisk || actions.leads)) {
         setLiveActions(prev => {
-          const merged = prev ? { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [] } : actions;
+          const merged = prev ? { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [], leads: actions.leads || [], inboundLeads: actions.inboundLeads || [] } : actions;
           try { localStorage.setItem("cockpit_actions_cache", JSON.stringify({ data: merged, timestamp: Date.now() })); } catch {}
           return merged;
         });
@@ -334,7 +346,7 @@ export default function App() {
       const cachedInternal = JSON.parse(localStorage.getItem("cockpit_internal_emails_cache") || "null");
       if (cachedEmails?.length || cachedInternal?.length) {
         setLiveActions(prev => {
-          const base = prev || { external: [], internal: [], dealsAtRisk: [] };
+          const base = prev || { external: [], internal: [], dealsAtRisk: [], leads: [], inboundLeads: [] };
           return {
             ...base,
             external: [...(cachedEmails || []), ...(base.external || []).filter(a => a.channel !== "email")],
@@ -358,7 +370,7 @@ export default function App() {
         }
         if (hasExternal || hasInternal) {
           setLiveActions(prev => {
-            const base = prev || { external: [], internal: [], dealsAtRisk: [] };
+            const base = prev || { external: [], internal: [], dealsAtRisk: [], leads: [] };
             const nonEmailExternal = (base.external || []).filter(a => a.channel !== "email");
             const nonEmailInternal = (base.internal || []).filter(a => a.channel !== "email");
             return {
@@ -378,13 +390,15 @@ export default function App() {
         fetch("/.netlify/functions/actions-fast").then(r => r.json()).catch(() => null),
       ]).then(([metrics, actions]) => {
         if (metrics && !metrics.error) setLiveMetrics(metrics);
-        if (actions && (actions.external || actions.dealsAtRisk)) {
+        if (actions && (actions.external || actions.dealsAtRisk || actions.leads)) {
           setLiveActions(prev => {
             if (!prev) return actions;
             return {
               ...actions,
               external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")],
               internal: prev.internal || [],
+              leads: actions.leads || [],
+              inboundLeads: actions.inboundLeads || [],
             };
           });
           try { localStorage.setItem("cockpit_actions_cache", JSON.stringify({ data: actions, timestamp: Date.now() })); } catch {}
@@ -401,7 +415,7 @@ export default function App() {
   // Lazy AI enrichment — runs after actions load, doesn't block
   useEffect(() => {
     if (!liveActions) return;
-    const allActions = [...(liveActions.dealsAtRisk || []), ...(liveActions.external || []), ...(liveActions.internal || [])].slice(0, 15);
+    const allActions = [...(liveActions.dealsAtRisk || []), ...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.leads || []), ...(liveActions.inboundLeads || [])].slice(0, 15);
     if (allActions.length === 0) return;
 
     fetch("/.netlify/functions/enrich-actions", {
@@ -414,7 +428,7 @@ export default function App() {
           data.enriched.forEach(e => {
             const action = allActions[e.index];
             if (!action) return;
-            for (const qKey of ["external", "internal", "dealsAtRisk"]) {
+            for (const qKey of ["external", "internal", "dealsAtRisk", "leads", "inboundLeads"]) {
               const idx = (updated[qKey] || []).findIndex(a => a.id === action.id);
               if (idx >= 0) {
                 if (e.shouldRemove) {
@@ -657,7 +671,7 @@ export default function App() {
             // Badge counts
             let badge = 0;
             if (key === "actions" && liveActions) {
-              badge = [...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.dealsAtRisk || [])].filter(a => !isInCooldown(a.id) && (typeof (actionStatuses[a.id]) === "object" ? actionStatuses[a.id]?.status : actionStatuses[a.id]) !== "done").filter(a => a.priority === "critical").length;
+              badge = [...(liveActions.external || []), ...(liveActions.internal || []), ...(liveActions.dealsAtRisk || []), ...(liveActions.leads || []), ...(liveActions.inboundLeads || [])].filter(a => !isInCooldown(a.id) && (typeof (actionStatuses[a.id]) === "object" ? actionStatuses[a.id]?.status : actionStatuses[a.id]) !== "done").filter(a => a.priority === "critical").length;
             }
             if (key === "pipeline" && liveMetrics?.pastDueDeals) badge = liveMetrics.pastDueDeals;
             return (
@@ -784,6 +798,8 @@ export default function App() {
             external: [...(liveActions?.external || []), ...customActions.filter(a => a.queue === "external")],
             internal: [...(liveActions?.internal || []), ...customActions.filter(a => a.queue === "internal")],
             dealsAtRisk: liveActions?.dealsAtRisk || [],
+            inboundLeads: liveActions?.inboundLeads || [],
+            leads: liveActions?.leads || [],
           };
           let currentActions = liveActions ? [...(queueMap[actionQueue] || [])] : [];
           // Remove done/skipped items
@@ -800,6 +816,8 @@ export default function App() {
           const queues = [
             { key: "external", label: "External", color: "#10B981" },
             { key: "internal", label: "Internal", color: "#3B82F6" },
+            { key: "inboundLeads", label: "Inbound Leads", color: "#F59E0B" },
+            { key: "leads", label: "Leads", color: "#64748B" },
             { key: "dealsAtRisk", label: "Deals at Risk", color: "#EF4444" },
             { key: "suggestions", label: "AI Suggestions", color: "#8B5CF6" },
           ];
@@ -975,13 +993,26 @@ export default function App() {
               </div>
             )}
 
-            {currentActions.map(action => {
-              const expanded = expandedAction === action.id;
-              const rawSt = actionStatuses[action.id];
-              const status = isLive ? (typeof rawSt === "string" ? rawSt : rawSt?.status || "pending") : action.status;
-              const done = status === "done";
-              const skipped = status === "skipped";
-              return (
+            {(() => {
+              const sectionHeader = (label, count, color) => (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 8px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
+                  {label}
+                  <span style={{ background: "#1E293B", color: "#94A3B8", padding: "1px 8px", borderRadius: 10, fontSize: 10 }}>{count}</span>
+                  <span style={{ flex: 1, height: 1, background: "#1E293B" }} />
+                </div>
+              );
+              const sections = [{ label: null, color: null, items: currentActions }];
+              return sections.map((section, si) => (
+                <div key={section.label || si}>
+                  {section.label && sectionHeader(section.label, section.items.length, section.color)}
+                  {section.items.map(action => {
+                    const expanded = expandedAction === action.id;
+                    const rawSt = actionStatuses[action.id];
+                    const status = isLive ? (typeof rawSt === "string" ? rawSt : rawSt?.status || "pending") : action.status;
+                    const done = status === "done";
+                    const skipped = status === "skipped";
+                    return (
                 <div
                   key={action.id}
                   className="card-hover"
@@ -1200,7 +1231,10 @@ export default function App() {
                   )}
                 </div>
               );
-            })}
+                  })}
+                </div>
+              ));
+            })()}
           </div>
           );
         })()}
