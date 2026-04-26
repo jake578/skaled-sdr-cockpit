@@ -4,7 +4,7 @@ import { getAccessToken } from "./google-auth.js";
 export default async (req) => {
   try {
     const token = await getAccessToken();
-    const actions = { external: [], internal: [], dealsAtRisk: [], leads: [] };
+    const actions = { external: [], internal: [], dealsAtRisk: [] };
 
     // ── 1. Calendar: today + next 2 days ─────────────────────
     const now = new Date();
@@ -452,32 +452,23 @@ Be VERY strict. 70%+ of emails should be FYI_ONLY. Only NEEDS_ACTION if Jake ign
 
         // New leads
         const leads = await sfdcQuery(
-          `SELECT Id, Name, Company, Title, Status, CreatedDate, LeadSource, Description FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`
+          `SELECT Id, Name, Company, Title, Status, CreatedDate FROM Lead WHERE IsConverted = false AND Status = 'New' ORDER BY CreatedDate DESC LIMIT 10`
         );
-
-        const inboundKeywords = ["web", "inbound", "form", "demo", "contact us", "download", "webinar", "newsletter", "landing", "chat", "referral"];
 
         leads.forEach(l => {
           const daysOld = l.CreatedDate
             ? Math.floor((now.getTime() - new Date(l.CreatedDate).getTime()) / 86400000)
             : 0;
-          const source = l.LeadSource || "";
-          const sourceLower = source.toLowerCase();
-          const desc = (l.Description || "").toLowerCase();
-          const descInbound = ["filled out", "requested", "downloaded", "submitted", "signed up"].some(k => desc.includes(k));
-          const isInbound = !!source && (inboundKeywords.some(k => sourceLower.includes(k)) || descInbound);
 
-          actions.leads.push({
+          actions.external.push({
             id: `lead-${l.Id}`,
             type: "follow-up",
-            priority: isInbound ? (daysOld <= 1 ? "critical" : "high") : (daysOld <= 1 ? "high" : "medium"),
+            priority: daysOld <= 1 ? "high" : "medium",
             title: `New lead: ${l.Name}`,
-            subtitle: `${l.Company || "—"} · ${l.Title || "—"}${source ? " · " + source : ""}`,
+            subtitle: `${l.Company || "—"} · ${l.Title || "—"}`,
             channel: "salesforce",
             dueTime: daysOld <= 1 ? "New today" : `${daysOld}d old`,
             suggestedAction: `New lead from ${l.Company || "unknown"}. Research and qualify.`,
-            isInbound,
-            leadSource: source || null,
           });
         });
 
@@ -595,13 +586,12 @@ Be VERY strict. 70%+ of emails should be FYI_ONLY. Only NEEDS_ACTION if Jake ign
     const sortByPriority = (a, b) => (priorityOrder[a.priority] || 3) - (priorityOrder[b.priority] || 3);
     actions.external.sort(sortByPriority);
     actions.internal.sort(sortByPriority);
-    actions.leads.sort(sortByPriority);
 
     // AI Enrichment moved to on-demand (AI Suggestions tab) for faster initial load
 
     return Response.json(actions);
   } catch (e) {
-    return Response.json({ error: e.message, external: [], internal: [], dealsAtRisk: [], leads: [] }, { status: 500 });
+    return Response.json({ error: e.message, external: [], internal: [], dealsAtRisk: [] }, { status: 500 });
   }
 };
 
