@@ -157,6 +157,8 @@ export default function App() {
           d.leads = [...(d.leads || []), ...leadsFromExt];
         }
         if (!d.inboundLeads) d.inboundLeads = [];
+        // Calendar events no longer belong in internal; only blue events live in external
+        d.internal = (d.internal || []).filter(a => !a.id?.startsWith("cal-"));
         return d;
       }
     } catch {} return null;
@@ -331,7 +333,7 @@ export default function App() {
       }
       if (actions && (actions.external || actions.dealsAtRisk || actions.leads)) {
         setLiveActions(prev => {
-          const merged = prev ? { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")], internal: prev.internal || [], leads: actions.leads || [], inboundLeads: actions.inboundLeads || [] } : actions;
+          const merged = prev ? { ...actions, external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel === "email")], internal: (prev.internal || []).filter(a => !a.id?.startsWith("cal-")), leads: actions.leads || [], inboundLeads: actions.inboundLeads || [] } : actions;
           try { localStorage.setItem("cockpit_actions_cache", JSON.stringify({ data: merged, timestamp: Date.now() })); } catch {}
           return merged;
         });
@@ -395,8 +397,8 @@ export default function App() {
             if (!prev) return actions;
             return {
               ...actions,
-              external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel !== "salesforce")],
-              internal: prev.internal || [],
+              external: [...(actions.external || []), ...(prev.external || []).filter(a => a.channel === "email")],
+              internal: (prev.internal || []).filter(a => !a.id?.startsWith("cal-")),
               leads: actions.leads || [],
               inboundLeads: actions.inboundLeads || [],
             };
@@ -1053,6 +1055,23 @@ export default function App() {
                         {action.title}
                       </div>
                       <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 4 }}>{action.subtitle}</div>
+                      {/* Inbound lead enrichment — role, size, industry, what they do */}
+                      {action.isInbound && (action.role || action.companySize || action.industry || action.whatTheyDo) && !done && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                          {action.role && (
+                            <span style={{ fontSize: 11, background: "#3B82F615", color: "#93C5FD", padding: "2px 8px", borderRadius: 4 }}>{action.role}</span>
+                          )}
+                          {action.companySize && (
+                            <span style={{ fontSize: 11, background: "#0F172A", color: "#94A3B8", padding: "2px 8px", borderRadius: 4 }}>{action.companySize.toLocaleString()} employees</span>
+                          )}
+                          {action.industry && (
+                            <span style={{ fontSize: 11, background: "#0F172A", color: "#94A3B8", padding: "2px 8px", borderRadius: 4 }}>{action.industry}</span>
+                          )}
+                          {action.whatTheyDo && (
+                            <span style={{ fontSize: 11, color: "#CBD5E1", width: "100%", marginTop: 2 }}>{action.whatTheyDo}</span>
+                          )}
+                        </div>
+                      )}
                       {/* Context: what's happening */}
                       {action.context && !done && (
                         <div style={{ fontSize: 12, color: "#CBD5E1", marginTop: 6, lineHeight: 1.5, background: "#1E293B", padding: "6px 10px", borderRadius: 4 }}>
@@ -1078,6 +1097,10 @@ export default function App() {
 
                       {/* Inline context — auto-loads when expanded */}
                       <ActionContext action={action} />
+
+                      {action.type === "meeting" && (
+                        <InlineMeetingBrief action={action} />
+                      )}
 
                       {/* Critical: prompt to auto-draft */}
                       {action.priority === "critical" && status === "pending" && (action.type === "email" || action.type === "follow-up") && (
@@ -2182,6 +2205,72 @@ function ActionContext({ action }) {
           {data.meetings.slice(0, 2).map((m, i) => (
             <div key={i} style={{ fontSize: 11, color: "#94A3B8", paddingLeft: 8, borderLeft: "2px solid #F59E0B20", marginBottom: 2 }}>
               {m.subject || "Meeting"} · {m.date || "—"} {m.isPast === false ? "(upcoming)" : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InlineMeetingBrief({ action }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const subject = action.eventSubject || action.title;
+    const attendees = action.attendees || [];
+    const account = action.accountName || action.subtitle?.split("With:")[1]?.split(",")[0]?.trim() || null;
+
+    fetch("/.netlify/functions/meeting-prep-quick", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventSubject: subject, attendees, accountName: account }),
+    }).then(r => r.json()).then(d => {
+      if (d.error) setError(d.error); else setData(d);
+      setLoading(false);
+    }).catch(e => { setError(e.message); setLoading(false); });
+  }, [action.id]);
+
+  if (loading) {
+    return (
+      <div style={{ background: "#0F172A", borderRadius: 8, padding: 12, marginBottom: 12, border: "1px solid #1E293B" }}>
+        <div style={{ fontSize: 10, color: "#8B5CF6", fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>90-Second Brief</div>
+        <div style={{ fontSize: 11, color: "#64748B" }}>Pulling context from Gmail, Chorus, SFDC...</div>
+      </div>
+    );
+  }
+
+  if (error) return null;
+  if (!data?.brief) return null;
+
+  return (
+    <div style={{ background: "#0F172A", borderRadius: 8, padding: 12, marginBottom: 12, border: "1px solid #8B5CF630" }}>
+      <div style={{ fontSize: 10, color: "#8B5CF6", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>90-Second Brief</span>
+      </div>
+      <div style={{ fontSize: 12, color: "#CBD5E1", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+        {strip(data.brief)}
+      </div>
+      {data.attendeeInfo?.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid #1E293B" }}>
+          <div style={{ fontSize: 10, color: "#F59E0B", fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>Key Contacts</div>
+          {data.attendeeInfo.slice(0, 4).map((c, i) => (
+            <div key={i} style={{ fontSize: 11, color: "#94A3B8", marginBottom: 2 }}>
+              <span style={{ color: "#F1F5F9", fontWeight: 600 }}>{c.name}</span>
+              {c.title && <span> — {c.title}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {data.dealContext?.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid #1E293B" }}>
+          <div style={{ fontSize: 10, color: "#10B981", fontWeight: 700, marginBottom: 4, textTransform: "uppercase" }}>Open Opps</div>
+          {data.dealContext.slice(0, 3).map((o, i) => (
+            <div key={i} style={{ fontSize: 11, color: "#94A3B8", marginBottom: 2 }}>
+              <span style={{ color: "#F1F5F9", fontWeight: 600 }}>{o.name}</span>
+              <span> — ${(o.amount || 0).toLocaleString()} · {o.stage}</span>
             </div>
           ))}
         </div>
